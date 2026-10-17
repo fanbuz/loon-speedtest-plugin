@@ -22,7 +22,7 @@
     return '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"></head><body>' + body + '</body></html>';
   }
   function render(result) {
-    var body = paragraph(text(result.node, 13, 500));
+    var body = paragraph(text(result.node, 13, 500) + '<br>' + text('协议 · ' + (result.nodeProtocol || '未知'), 11));
     var warnings = [];
     var elapsed = 0;
     var bytes = 0;

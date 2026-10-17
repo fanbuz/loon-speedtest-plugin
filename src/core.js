@@ -88,14 +88,35 @@
     };
   }
 
-  // Only documented node/policyGroup strings are used automatically. nodeInfo is
-  // deliberately not guessed: its internal schema is not publicly specified.
+  // Preserve explicit routing; nodeInfo is read separately for display only.
   function resolveTarget(explicit, environment) {
     if (typeof explicit === "string" && explicit.trim()) return explicit.trim();
     var params = environment && environment.params || {};
     if (typeof params.node === "string" && params.node.trim()) return params.node.trim();
     if (typeof params.policyGroup === "string" && params.policyGroup.trim()) return params.policyGroup.trim();
     throw new Error("未指定测速目标：请填写 node，或从提供节点/策略组名称的入口运行；直连请明确填写 DIRECT");
+  }
+
+  function resolveNodeProtocol(target, environment) {
+    if (target === "DIRECT") return "直连";
+    var params = environment && environment.params || {};
+    var info = params.nodeInfo;
+    // Loon's official generic_example.js documents the name/type object fields.
+    // Accept JSON-serialized objects for compatibility; never parse node names.
+    if (typeof info === "string") {
+      try { info = JSON.parse(info); } catch (_) { return null; }
+    }
+    if (!info || typeof info !== "object" || Array.isArray(info)) return null;
+    if (typeof info.name !== "string" || info.name.trim() !== target) return null;
+    if (typeof params.node === "string" && params.node.trim() && params.node.trim() !== target) return null;
+    if (typeof info.type !== "string") return null;
+    var types = {
+      shadowsocks: "Shadowsocks", ss: "Shadowsocks", shadowsocksr: "ShadowsocksR", ssr: "ShadowsocksR",
+      vmess: "VMess", vless: "VLESS", trojan: "Trojan", hysteria: "Hysteria", hysteria2: "Hysteria2", hy2: "Hysteria2",
+      tuic: "TUIC", tuicv5: "TUIC v5", snell: "Snell", socks5: "SOCKS5", http: "HTTP", https: "HTTPS", wireguard: "WireGuard", ssh: "SSH"
+    };
+    var key = info.type.trim().toLowerCase();
+    return Object.prototype.hasOwnProperty.call(types, key) ? types[key] : null;
   }
 
   function formatRate(bytesPerSecond) {
@@ -327,7 +348,7 @@
       if (result.state !== "ok") break;
     }
     return {
-      version: "0.3.0", direction: options.direction, mode: options.mode, node: options.node, source: options.testUrl, testSource: options.testSource, sourceInfo: sourceInfo,
+      version: "0.3.1", direction: options.direction, mode: options.mode, node: options.node, nodeProtocol: options.nodeProtocol || null, source: options.testUrl, testSource: options.testSource, sourceInfo: sourceInfo,
       state: runs.length === levels.length && runs.every(function (result) { return result.state === "ok"; }) ? "ok" : "failed",
       budgetBytes: options.maxBytes, runs: runs,
       comparisonRatio: runs.length === 2 && runs.every(function (result) { return result.state === "ok"; }) && runs[0].bytesPerSecond > 0 ? runs[1].bytesPerSecond / runs[0].bytesPerSecond : null
@@ -365,14 +386,15 @@
     }
     var runs = [].concat.apply([], parts.map(function (part) { return part.runs; }));
     var ok = parts.length === directions.length && parts.every(function (part) { return part.state === "ok"; });
-    return { version: "0.3.0", direction: "both", mode: options.mode, node: options.node,
+    return { version: "0.3.1", direction: "both", mode: options.mode, node: options.node, nodeProtocol: options.nodeProtocol || null,
       testSource: options.testSource, uploadSource: options.uploadSource, source: options.testUrl, uploadUrl: options.uploadUrl,
       state: ok ? "ok" : runs.some(function (item) { return item.state === "ok"; }) ? "partial" : "failed",
       budgetBytes: options.maxBytes, runs: runs, comparisonRatio: null };
   }
 
   function summary(result) {
-    var lines = ["速度测试 · " + result.node, result.direction === "both" ? "下载源：" + sourceLabel(result.testSource) + " · 上传源：" + sourceLabel(result.uploadSource) : "测速源：" + sourceLabel(result.testSource)];
+    var lines = ["节点速度测试 · " + result.node, result.direction === "both" ? "下载源：" + sourceLabel(result.testSource) + " · 上传源：" + sourceLabel(result.uploadSource) : "测速源：" + sourceLabel(result.testSource)];
+    lines.splice(1, 0, "节点协议：" + (result.nodeProtocol || "未知"));
     result.runs.forEach(function (item) {
       lines.push(modeLabel(item.concurrency) + (item.direction === "upload" ? "上传" : "下载") + " · " + sourceLabel(item.testSource) + "：" + (item.state === "ok" ? formatRate(item.bytesPerSecond) : "无有效速度结果（" + item.state + "）"));
       lines.push("测量数据 " + (item.completedBytes / MB).toFixed(2) + " MB · 测量耗时 " + (item.elapsedMs / 1000).toFixed(2) + " 秒");
@@ -389,5 +411,5 @@
     return { duration: "已达到测量时长", budget: "已达到数据预算", error: "传输出现异常", "callback-timeout": "传输回调超时", "warmup-error": "预热未完成" }[reason] || "测试结束";
   }
 
-  return { parseArgument: parseArgument, normalizeOptions: normalizeOptions, resolveTarget: resolveTarget, formatRate: formatRate, run: run, summary: summary, stopReasonLabel: stopReasonLabel };
+  return { parseArgument: parseArgument, normalizeOptions: normalizeOptions, resolveTarget: resolveTarget, resolveNodeProtocol: resolveNodeProtocol, formatRate: formatRate, run: run, summary: summary, stopReasonLabel: stopReasonLabel };
 });

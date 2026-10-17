@@ -122,3 +122,25 @@ for (const [label, reply] of [
   assert.equal(result.state, 'failed');
   assert.equal(result.runs[0].successfulRequests, 0);
 });
+
+test('节点协议读取官方示例 name/type 并标准化，JSON 字符串兼容，不影响路由',()=>{
+  const environment={params:{node:'节点 A',nodeInfo:{name:'节点 A',type:'Vmess',address:'private.example',port:12345,tls:1}}};
+  assert.equal(core.resolveNodeProtocol('节点 A',environment),'VMess');
+  for(const [type,label] of [['Shadowsocks','Shadowsocks'],['ss','Shadowsocks'],['SSR','ShadowsocksR'],['Trojan','Trojan'],['Hysteria2','Hysteria2'],['HY2','Hysteria2'],['vless','VLESS'],['TUIC','TUIC'],['Snell','Snell'],['socks5','SOCKS5']]) {
+    assert.equal(core.resolveNodeProtocol('节点 A',{params:{nodeInfo:{name:'节点 A',type}}}),label);
+  }
+  assert.equal(core.resolveNodeProtocol('节点 A',{params:{nodeInfo:JSON.stringify({name:'节点 A',type:'Trojan'})}}),'Trojan');
+  assert.equal(core.resolveTarget('节点 B',environment),'节点 B');
+  assert.equal(core.resolveNodeProtocol('节点 B',environment),null);
+  assert.equal(core.resolveNodeProtocol('DIRECT',environment),'直连');
+});
+
+test('协议不能由节点名推断；缺失、不匹配、策略组或损坏元数据均显示未知',()=>{
+  for(const environment of [undefined,{}, {params:{node:'美国 HY2'}}, {params:{nodeInfo:'not json'}}, {params:{nodeInfo:[]}},
+    {params:{nodeInfo:{type:'Hysteria2'}}},{params:{nodeInfo:{name:'其他节点',type:'Hysteria2'}}},
+    {params:{node:'其他节点',nodeInfo:{name:'美国 HY2',type:'Hysteria2'}}},
+    {params:{nodeInfo:{name:'美国 HY2',type:3}}}, {params:{nodeInfo:{name:'美国 HY2',type:'<script>private-token</script>'}}}]) {
+    assert.equal(core.resolveNodeProtocol('美国 HY2',environment),null);
+  }
+  assert.equal(core.resolveNodeProtocol('代理组',{params:{policyGroup:'代理组',nodeInfo:{name:'实际节点',type:'Trojan'}}}),null);
+});

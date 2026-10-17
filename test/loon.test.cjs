@@ -50,7 +50,7 @@ async function execute({ argument, environment, storageThrows = false, notificat
 test('模拟 Loon API 验证 node/二进制参数、结果保存和单次结束', async () => {
   const result = await execute({ argument: { mode: 'compare', node: '节点 A', maxMB: 4, duration: 3 } });
   assert.equal(result.doneCount, 1);
-  assert.equal(result.doneResults[0].title, '速度测试');
+  assert.equal(result.doneResults[0].title, '节点速度测试');
   assert.match(result.doneResults[0].htmlMessage, /↓ 下载/);
   assert.match(result.doneResults[0].htmlMessage, /4 路并发/);
   assert.equal(result.notifications.length, 1);
@@ -81,7 +81,7 @@ test('存储与通知失败不影响脚本结束', async () => {
   const result = await execute({ argument: { node: 'DIRECT', maxMB: 4 }, storageThrows: true, notificationThrows: true });
   assert.equal(result.doneCount, 1);
   assert.ok(result.logs.some(line => line.includes('本地存储失败')));
-  assert.equal(result.doneResults[0].title, '速度测试');
+  assert.equal(result.doneResults[0].title, '节点速度测试');
   assert.ok(result.doneResults[0].htmlMessage.length > 0);
 });
 
@@ -90,7 +90,7 @@ test('Loon 未返回二进制时报告失败，不使用 Header 伪造下载量'
   assert.equal(result.saved[0].value.state, 'failed');
   assert.equal(result.saved[0].value.runs[0].completedBytes, 0);
   assert.equal(result.requests.length, 1);
-  assert.equal(result.doneResults[0].title, '速度测试 · 未完成');
+  assert.equal(result.doneResults[0].title, '节点速度测试 · 未完成');
   assert.match(result.doneResults[0].htmlMessage, /不是 Uint8Array/);
 });
 
@@ -170,4 +170,28 @@ test('对端关闭的弹窗显示短中文原因，日志与保存结果保留�
   assert.doesNotMatch(r.doneResults[0].htmlMessage,/LNGCDAsyncSocketErrorDomain/);
   assert.match(r.saved[0].value.runs[0].warmup.errors[0],/LNGCDAsyncSocketErrorDomain/);
   assert.ok(r.logs.some(x=>x.includes(detail)));
+});
+
+test('节点协议在结果、日志与保存记录显示，节点信息不扩散且路由目标不变',async()=>{
+  for(const direction of ['download','both']) {
+    const environment={params:{node:'节点 A',nodeInfo:{name:'节点 A',type:'Hysteria2',address:'private.example',password:'private-token'}}};
+    const r=await execute({argument:{node:'节点 A',direction,maxMB:4},environment});
+    assert.equal(r.doneResults[0].title,'节点速度测试');
+    assert.match(r.doneResults[0].htmlMessage,/协议 · Hysteria2/);
+    assert.equal(r.saved[0].value.nodeProtocol,'Hysteria2');
+    assert.ok(r.requests.every(x=>x.node==='节点 A'));
+    assert.ok(r.logs.some(x=>x.includes('节点协议：Hysteria2')));
+    assert.doesNotMatch(JSON.stringify([r.doneResults,r.saved,r.logs,r.notifications]),/private\.example|private-token/);
+  }
+});
+
+test('显式覆盖节点或策略组不套用入口协议，未知协议仍正常测速，DIRECT 标直连',async()=>{
+  const environment={params:{node:'节点 A',nodeInfo:{name:'节点 A',type:'Trojan'}}};
+  for(const [node,label] of [['节点 B','未知'],['DIRECT','直连']]) {
+    const r=await execute({argument:{node,maxMB:4},environment});
+    assert.equal(r.saved[0].value.state,'ok');assert.match(r.doneResults[0].htmlMessage,new RegExp('协议 · '+label));
+    assert.ok(r.requests.every(x=>x.node===node));
+  }
+  const r=await execute({argument:{maxMB:4},environment:{params:{policyGroup:'策略组',nodeInfo:{name:'实际节点',type:'Trojan'}}}});
+  assert.match(r.doneResults[0].htmlMessage,/协议 · 未知/);assert.ok(r.requests.every(x=>x.node==='策略组'));
 });

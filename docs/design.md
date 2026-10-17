@@ -1,4 +1,4 @@
-# 速度测试设计
+# 节点速度测试设计
 
 ## 请求与数据
 
@@ -24,9 +24,17 @@
 
 Loon 只给完成回调，不能据此输出真实逐秒峰值。HTTP 并发不证明底层有 N 条独立 TCP 连接；预热不保证完全消除新连接影响。短样本提示增加预算复测。
 
+## 节点协议
+
+仅用于展示，不影响测速请求目标。读取 `$environment.params.nodeInfo.name/type`；官方 Generic 示例给出对象字段（包括 name、type、address、port、tls），这里只保留匹配目标的协议类型。兼容 JSON 对象字符串，不读取密码、地址或端口，不复制或记录整个 nodeInfo。
+
+nodeInfo.name 必须与实际传入请求的 node 完全匹配；若旧字段 params.node 存在，也必须一致。显式覆盖目标或策略组与节点信息不匹配时显示未知；没有协议元数据时也不根据节点名推断。DIRECT 显示直连。协议别名标准化为 Hysteria2、Trojan、Shadowsocks、VMess 等；未识别的类型显示未知。
+
+这是节点配置协议的展示，不是底层连接协议、独立 TCP 数量或代理链完整拓扑的检测。不增加网络请求，不调用修改策略的 API。
+
 ## 原生弹窗
 
-手机截图证明浏览器式 grid/flex、CSS 变量和背景色在宿主中不能按预期呈现。结果改用内联字号、字体、颜色及普通段落/换行，不设置背景、不使用 class 或 style 块，不依赖脚本、网络字体或图片。统一无衬线，数字收敛为 30px；默认只显示下载、上传两项及一行总计。原生 HTML 排版器用于兼容性检查，仍需 Loon 真机回归。
+手机截图证明浏览器式 grid/flex、CSS 变量和背景色在宿主中不能按预期呈现。结果改用内联字号、字体、颜色及普通段落/换行，不设置背景、不使用 class 或 style 块，不依赖脚本、网络字体或图片。统一无衬线，数字收敛为 30px；节点名称下以 11px 显示协议，测速指标仍只显示下载、上传两项及一行总计。原生 HTML 排版器用于兼容性检查，仍需 Loon 真机回归。
 
 成功/部分成功均 `$done({title, htmlMessage})`，渲染异常回退 title/content；关闭通知不影响结果。预热失败直接展示底层 HTTP/网络错误而非笼统阶段文案；HTTPClient 对象错误保留 message/description 与状态。对端关闭连接的长系统错误在弹窗收敛为中文原因，日志和 `$persistentStore` 保存完整明细。
 
@@ -38,6 +46,7 @@ npm run build 生成 main/dist 的绝对 Raw 脚本地址，附版本参数。�
 
 ## 一手资料
 
+- [Loon 官方 Generic 节点信息示例](https://github.com/Loon0x00/LoonExampleConfig/blob/master/Script/generic_example.js)
 - [Loon HTTP 请求、POST 二进制及 timeout 单位](https://nsloon.app/docs/Script/script_api/)
 - [Loon Generic 与脚本超时](https://nsloon.app/docs/Script/script_v2/)
 - [Loon Scheme 与通用导入链接](https://nsloon.app/docs/Scheme/)

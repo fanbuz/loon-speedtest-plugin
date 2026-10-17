@@ -21,15 +21,17 @@
   function notify(title, text) {
     if (options && !options.notify) return;
     if (typeof $notification !== "undefined") {
-      try { $notification.post("速度测试", title, text); }
+      try { $notification.post("节点速度测试", title, text); }
       catch (error) { log("通知未发送：" + String(error.message || error)); }
     }
   }
 
   Promise.resolve().then(function () {
-    log("速度测试 v0.3.0 | 脚本已加载");
+    log("节点速度测试 v0.3.1 | 脚本已加载");
     options = LoonSpeedtest.normalizeOptions(typeof $argument === "undefined" ? null : $argument);
-    options.node = LoonSpeedtest.resolveTarget(options.node, typeof $environment === "undefined" ? null : $environment);
+    var environment = typeof $environment === "undefined" ? null : $environment;
+    options.node = LoonSpeedtest.resolveTarget(options.node, environment);
+    options.nodeProtocol = LoonSpeedtest.resolveNodeProtocol(options.node, environment);
     return LoonSpeedtest.run(options, {
       now: function () { return Date.now(); },
       setTimeout: function (callback, ms) { setTimeout(callback, ms); },
@@ -74,7 +76,7 @@
         if (!$persistentStore.write(JSON.stringify(result), "loon-speedtest:lastResult")) log("本次结果未保存到本地存储");
       } catch (error) { log("本地存储失败：" + String(error.message || error)); }
     }
-    var title = result.state === "ok" ? "速度测试" : result.state === "partial" ? "速度测试 · 部分完成" : "速度测试 · 未完成";
+    var title = result.state === "ok" ? "节点速度测试" : result.state === "partial" ? "节点速度测试 · 部分完成" : "节点速度测试 · 未完成";
     notify(title, text);
     done(title, text, result);
   }).catch(function (error) {

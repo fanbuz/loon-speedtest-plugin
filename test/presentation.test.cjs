@@ -41,3 +41,12 @@ test('预热失败直接显示底层 HTTP 错误，不用笼统阶段提示覆�
   assert.doesNotMatch(html,/预热未完成，未开始正式测量/);
   assert.match(html,/<font face="Helvetica"/);
 });
+
+test('协议在节点名称下显示并转义，未知元数据不影响双向速度',()=>{
+  const r=fixture();r.nodeProtocol='Hysteria2';
+  const html=view.render(r);assert.ok(html.indexOf('示例节点')<html.indexOf('协议 · Hysteria2'));
+  assert.ok(html.indexOf('协议 · Hysteria2')<html.indexOf('↓ 下载'));assert.match(html,/>13\.88<\/span>/);
+  r.nodeProtocol=null;assert.match(view.render(r),/协议 · 未知/);
+  r.nodeProtocol='<script>secret</script>';assert.match(view.render(r),/协议 · &lt;script&gt;secret&lt;\/script&gt;/);
+  assert.doesNotMatch(view.render(r),/<script>/);
+});

@@ -1,8 +1,8 @@
-#!name = 速度测试
+#!name = 节点速度测试
 #!author = fanbuz
 #!homepage = https://github.com/fanbuz/loon-speedtest-plugin
-#!icon = https://raw.githubusercontent.com/fanbuz/loon-speedtest-plugin/main/dist/icon.png?v=0.3.0
-#!desc = v0.3.0 上传与下载速度测试，支持单路、并发和对比；默认合计 64 MB。
+#!icon = https://raw.githubusercontent.com/fanbuz/loon-speedtest-plugin/main/dist/icon.png?v=0.3.1
+#!desc = v0.3.1 指定节点的上传与下载速度测试，支持单路、并发和对比；默认合计 64 MB。
 #!loon_version = 3.5.1(983)
 #!date = 2026-10-17
 #!tag = 工具,测速
@@ -24,4 +24,4 @@ requestTimeout = select,10,5,3,15,type=number,tag=请求超时（秒）
 notify = switch,true,type=boolean,tag=完成后通知
 
 [Script]
-generic then script("https://raw.githubusercontent.com/fanbuz/loon-speedtest-plugin/main/dist/loon-speedtest.js?v=0.3.0", {${direction}, ${mode}, ${node}, ${test_source}, ${test_url}, ${upload_source}, ${upload_url}, ${concurrency}, ${duration}, ${warmup}, ${chunkKB}, ${maxMB}, ${requestTimeout}, ${notify}}) with tag="速度测试", img_url="arrow.up.arrow.down.system", timeout=300
+generic then script("https://raw.githubusercontent.com/fanbuz/loon-speedtest-plugin/main/dist/loon-speedtest.js?v=0.3.1", {${direction}, ${mode}, ${node}, ${test_source}, ${test_url}, ${upload_source}, ${upload_url}, ${concurrency}, ${duration}, ${warmup}, ${chunkKB}, ${maxMB}, ${requestTimeout}, ${notify}}) with tag="节点速度测试", img_url="arrow.up.arrow.down.system", timeout=300

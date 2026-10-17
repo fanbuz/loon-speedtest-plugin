@@ -5,7 +5,7 @@
 <p align="center">
   <a href="https://github.com/fanbuz/loon-speedtest-plugin/releases/latest"><img src="https://img.shields.io/github/v/release/fanbuz/loon-speedtest-plugin?color=338276" alt="版本"></a>
   <a href="https://github.com/fanbuz/loon-speedtest-plugin/actions/workflows/check.yml"><img src="https://github.com/fanbuz/loon-speedtest-plugin/actions/workflows/check.yml/badge.svg" alt="构建状态"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/github/license/fanbuz/loon-speedtest-plugin?color=527caa" alt="MIT License"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-527caa" alt="MIT License"></a>
   <a href="https://nsloon.app/"><img src="https://img.shields.io/badge/Loon-3.5.1%20%28983%29%2B-777777" alt="Loon 3.5.1 (983)+"></a>
 </p>
 <p align="center">

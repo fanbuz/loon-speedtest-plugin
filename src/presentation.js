@@ -12,7 +12,7 @@
   }
   function sourceName(source) { return source === "apple" ? "Apple CDN" : source === "custom" ? "自定义" : "Cloudflare"; }
   function text(value, size, weight, color) {
-    return '<span style="font-family:-apple-system,Helvetica,sans-serif;font-size:' + size + 'px;font-weight:' + (weight || 400) + ';color:' + (color || '#777777') + '">' + escape(value) + '</span>';
+    return '<font face="Helvetica" color="' + (color || '#777777') + '"><span style="font-family:Helvetica;font-size:' + size + 'px;font-weight:' + (weight || 400) + ';color:' + (color || '#777777') + '">' + escape(value) + '</span></font>';
   }
   function paragraph(body) { return '<p style="margin:0 0 14px;line-height:1.4">' + body + '</p>'; }
   function documentHtml(body) {
@@ -37,7 +37,11 @@
         var mode = run.concurrency === 1 ? '单路' : run.concurrency + ' 路并发';
         var rate = valid ? (run.bytesPerSecond * 8 / 1000000).toFixed(2) : '—';
         lines.push((runs.length > 1 ? text(mode + '  ', 12) : '') + text(rate, 30, 600, color) + text(' Mbps', 12));
-        if (!valid) lines.push(text((run.errors || ['本项未完成'])[0] || '本项未完成', 12));
+        if (!valid) {
+          var warmupFailed = run.warmup && run.warmup.state !== 'ok';
+          var errors = warmupFailed && run.warmup.errors && run.warmup.errors.length ? run.warmup.errors : run.errors || [];
+          lines.push(text((warmupFailed ? '预热失败 · ' : '') + (errors[0] || '本项未完成'), 12));
+        }
         if ((run.warnings || []).length) warnings.push('样本较短，建议提高流量预算复测');
         elapsed += run.totalElapsedMs == null ? run.elapsedMs || 0 : run.totalElapsedMs;
         bytes += run.totalCompletedBytes == null ? run.completedBytes || 0 : run.totalCompletedBytes;

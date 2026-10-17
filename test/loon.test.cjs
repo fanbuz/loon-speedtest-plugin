@@ -6,8 +6,8 @@ const path = require('node:path');
 const harness = require('./harness.cjs');
 const script = ['core.js', 'presentation.js', 'loon.js'].map(name => fs.readFileSync(path.join(__dirname, '../src', name), 'utf8')).join('\n;\n');
 
-async function execute({ argument, environment, storageThrows = false, notificationThrows = false, dataType, delay = 200 } = {}) {
-  const h = harness({ delay });
+async function execute({ argument, environment, storageThrows = false, notificationThrows = false, dataType, reply, callbackError, delay = 200 } = {}) {
+  const h = harness({ delay, reply });
   let doneCount = 0;
   let completed;
   const donePromise = new Promise(resolve => { completed = resolve; });
@@ -17,6 +17,10 @@ async function execute({ argument, environment, storageThrows = false, notificat
   const requests = [];
   function requestWithMethod(method, opts, callback) {
     requests.push({ ...opts, method });
+    if (method==='POST' && callbackError) {
+      h.runtime.setTimeout(()=>callback(callbackError,{status:502}),100);
+      return;
+    }
     const range = opts.headers && opts.headers.Range;
     const bytes = method === 'POST' ? opts.body.byteLength : range ? Number(range.split('-')[1]) + 1 : Number(new URL(opts.url).searchParams.get('bytes'));
     h.runtime.request({ ...opts, method, bytes }).then(response => {
@@ -121,6 +125,25 @@ test('Loon 默认双向通过 POST 发送 Uint8Array，显式节点、超时、�
   assert.deepEqual(Array.from(result.saved[0].value.runs,x=>x.direction),['download','upload']);
   const posts=result.requests.filter(x=>x.method==='POST');
   assert.ok(posts.length>0);
-  assert.ok(posts.every(x=>Object.prototype.toString.call(x.body)==='[object Uint8Array]' && x.node==='节点 A' && x.timeout===5000 && x.headers['Content-Type']==='application/octet-stream'));
+  assert.ok(posts.every(x=>Object.prototype.toString.call(x.body)==='[object Uint8Array]' && x.node==='节点 A' && x.timeout===10000 && x.headers['Content-Type']==='application/octet-stream'));
   assert.match(result.doneResults[0].htmlMessage,/↑ 上传/);
+});
+
+test('复现手机截图：Apple HEAD 无范围声明仍下载，CF 预热错误在弹窗显示真实 403',async()=>{
+  const result=await execute({argument:{node:'测试节点',direction:'both',test_source:'Apple CDN',warmup:2,maxMB:4},reply:spec=>{
+    if(spec.method==='HEAD')return {status:200,headers:{},binary:true,bytes:0};
+    if(spec.method==='POST')return {status:403,headers:{},binary:true,bytes:0};
+    return {status:206,headers:{'Content-Range':'bytes 0-'+(spec.bytes-1)+'/4294967296'},binary:true,bytes:spec.bytes};
+  }});
+  assert.equal(result.saved[0].value.state,'partial');
+  assert.equal(result.saved[0].value.runs[0].state,'ok');
+  assert.match(result.doneResults[0].htmlMessage,/预热失败 · 请求 #1：上传 HTTP 403/);
+  assert.doesNotMatch(result.doneResults[0].htmlMessage,/未声明 Accept-Ranges/);
+});
+
+
+test('HTTPClient 回调对象错误保留具体说明及状态，不显示 object Object',async()=>{
+  const r=await execute({argument:{node:'DIRECT',direction:'upload',warmup:2,maxMB:4},callbackError:{message:'连接被重置'}});
+  assert.match(r.doneResults[0].htmlMessage,/预热失败 · 请求 #1：POST 请求失败：连接被重置（HTTP 502）/);
+  assert.doesNotMatch(r.doneResults[0].htmlMessage,/object Object/);
 });

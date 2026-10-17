@@ -6,6 +6,7 @@ import core from '../src/core.js';
 // Node smoke verifies the shared algorithm and endpoint only. It cannot use Loon nodes.
 const args = process.argv.slice(2);
 let local = false;
+let omitAcceptRanges = false;
 let source = 'cf';
 let testUrl;
 let warmup = 2;
@@ -13,12 +14,14 @@ let direction = 'both';
 while (args.length) {
   const option = args.shift();
   if (option === '--local') local = true;
+  else if (option === '--omit-accept-ranges') omitAcceptRanges = true;
   else if (option === '--source' && args.length) source = args.shift();
   else if (option === '--test-url' && args.length) testUrl = args.shift();
   else if (option === '--direction' && args.length) direction = args.shift();
   else if (option === '--warmup' && args.length) warmup = args.shift();
   else throw new Error('用法：npm run smoke -- [--local] [--source cf|apple|custom] [--test-url URL] [--warmup 秒] [--direction both|download|upload]');
 }
+if (omitAcceptRanges && !local) throw new Error('--omit-accept-ranges 只能用于本地服务');
 let server;
 if (local) {
   server = http.createServer((req, res) => {
@@ -32,7 +35,7 @@ if (local) {
       return;
     }
     if (req.method === 'HEAD') {
-      res.writeHead(200, { 'Accept-Ranges': 'bytes', 'Content-Length': '4294967296' });
+      res.writeHead(200, { ...(omitAcceptRanges ? {} : { 'Accept-Ranges': 'bytes' }), 'Content-Length': '4294967296' });
       res.end();
       return;
     }
@@ -48,7 +51,7 @@ if (local) {
     server.listen(0, '127.0.0.1', resolve);
   });
 }
-const options = core.normalizeOptions({ node: 'DIRECT', mode: 'compare', maxMB: 4, chunkKB: 250, duration: 3, requestTimeout: 5, test_source: source, test_url: testUrl, warmup, direction });
+const options = core.normalizeOptions({ node: 'DIRECT', mode: 'compare', maxMB: 4, chunkKB: 250, duration: 3, test_source: source, test_url: testUrl, warmup, direction });
 try {
   const result = await core.run(options, {
     now: () => performance.now(),

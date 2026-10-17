@@ -9,9 +9,9 @@
   <a href="https://nsloon.app/"><img src="https://img.shields.io/badge/Loon-3.5.1%20%28983%29%2B-777777" alt="Loon 3.5.1 (983)+"></a>
 </p>
 <p align="center">
-  <a href="https://www.nsloon.com/openloon/import?plugin=https%3A%2F%2Fraw.githubusercontent.com%2Ffanbuz%2Floon-speedtest-plugin%2Fmain%2Fdist%2FLoonSpeedtest.plugin%3Fv%3D0.2.0"><img src="assets/add-to-loon.svg" width="276" height="76" alt="一键添加到 Loon"></a>
+  <a href="https://www.nsloon.com/openloon/import?plugin=https%3A%2F%2Fraw.githubusercontent.com%2Ffanbuz%2Floon-speedtest-plugin%2Fmain%2Fdist%2FLoonSpeedtest.plugin%3Fv%3D0.2.1"><img src="assets/add-to-loon.svg" width="276" height="76" alt="一键添加到 Loon"></a>
   <br>
-  <a href="https://raw.githubusercontent.com/fanbuz/loon-speedtest-plugin/main/dist/LoonSpeedtest.plugin?v=0.2.0">Raw 安装地址</a> · <a href="https://github.com/fanbuz/loon-speedtest-plugin/releases/latest">下载发行包</a>
+  <a href="https://raw.githubusercontent.com/fanbuz/loon-speedtest-plugin/main/dist/LoonSpeedtest.plugin?v=0.2.1">Raw 安装地址</a> · <a href="https://github.com/fanbuz/loon-speedtest-plugin/releases/latest">下载发行包</a>
 </p>
 
 在 Loon 中测试指定节点的**下载与上传速度**，支持单路、多路并发和顺序对比。
@@ -22,7 +22,7 @@
 2. 插件参数 `node` 填已有节点或策略组的精确名称；直连填 `DIRECT`。
 3. 从 Generic 手动脚本入口运行「速度测试」。默认先下载、再上传，每项单独预热。
 
-更新后同时刷新插件和脚本缓存，日志首行应包含 `v0.2.0`。
+更新后同时刷新插件和脚本缓存，日志首行应包含 `v0.2.1`。
 
 ## 选项
 
@@ -33,6 +33,7 @@
 | 下载源 `test_source` | Cloudflare | Cloudflare / Apple CDN / 自定义 |
 | 并发数 `concurrency` | 4 | 2 / 4 / 8 |
 | 每项测量窗口 `duration` | 10 秒 | 5 / 10 / 15 / 30 秒 |
+| 请求超时 `requestTimeout` | 10 秒 | 3 / 5 / 10 / 15 秒 |
 | 预热窗口 `warmup` | 2 秒 | 0 关闭，或 1 / 2 / 3 / 5 秒 |
 | 总数据预算 `maxMB` | 64 MB | 包含全部下载、上传及预热；各项均分 |
 

@@ -93,7 +93,7 @@ test('双向 Apple HEAD 失联时不启动上传；明确不支持 Range 仍可�
   const hung=harness({hang:true});
   const r=await hung.settle(core.run(options({test_source:'apple'}),hung.runtime));
   assert.equal(r.runs.length,1);assert.equal(hung.calls.length,1);
-  const unsupported=harness({reply:spec=>spec.method==='HEAD'?{status:200,headers:{}}:success(spec)});
+  const unsupported=harness({reply:spec=>spec.method==='HEAD'?{status:200,headers:{'Accept-Ranges':'none'}}:success(spec)});
   const partial=await unsupported.settle(core.run(options({test_source:'apple'}),unsupported.runtime));
   assert.equal(partial.state,'partial');assert.equal(partial.runs[1].direction,'upload');
 });

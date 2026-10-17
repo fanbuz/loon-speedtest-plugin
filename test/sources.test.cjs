@@ -42,11 +42,27 @@ test('自定义地址和查询参数原样保留；对比只进行一次 HEAD �
   assert.match(core.summary(result), /测速源：自定义/);
 });
 
-test('HEAD 未声明范围能力时在正文下载前终止，不把 200 本身当作错误', async () => {
-  const h = harness({ reply: () => ({ status: 200, headers: { 'Content-Length': '4294967296' } }) });
-  await assert.rejects(h.settle(core.run(options({ test_source: 'apple' }), h.runtime)), /未声明 Accept-Ranges/);
-  assert.equal(h.calls.length, 1);
-  assert.equal(h.calls[0].method, 'HEAD');
+test('Apple 和自定义 HEAD 200 缺少 Accept-Ranges 仍以 GET 206 实际校验', async () => {
+  for (const source of ['apple','custom']) {
+    const h = harness({ delay:100, reply: spec => spec.method === 'HEAD' ? { status: 200, headers: { 'Content-Length': '4294967296' } } : goodRange(spec) });
+    const result = await h.settle(core.run(options({test_source:source,test_url:'https://example.com/file'}),h.runtime));
+    assert.equal(result.state,'ok');
+    assert.ok(h.calls.some(x=>x.method==='GET' && x.headers.Range));
+    assert.equal(result.runs[0].completedBytes,4000000);
+  }
+});
+
+test('明确声明 Accept-Ranges none 时不发正文，不重试', async () => {
+  const h = harness({reply:()=>({status:200,headers:{'Accept-Ranges':'none'}})});
+  await assert.rejects(h.settle(core.run(options({test_source:'apple'}),h.runtime)),/Accept-Ranges: none/);
+  assert.equal(h.calls.length,1);
+});
+
+test('HEAD 200 缺少范围声明但 GET 忽略 Range 时不能成功', async()=>{
+  const h=harness({reply:spec=>spec.method==='HEAD'?{status:200,headers:{}}:{status:200,binary:true,bytes:spec.bytes}});
+  const r=await h.settle(core.run(options({test_source:'apple'}),h.runtime));
+  assert.equal(r.state,'failed');assert.equal(r.runs[0].bytesPerSecond,null);
+  assert.match(r.runs[0].errors[0],/需要 HTTP 206/);
 });
 
 test('兼容端点返回合法 HEAD 206 元数据，但不依赖该行为', async () => {
@@ -59,7 +75,7 @@ test('分段预检缺失回调时超时退出，不发 GET', async () => {
   const h = harness({ hang: true });
   await assert.rejects(h.settle(core.run(options({ test_source: 'apple' }), h.runtime)), /分段检查超时/);
   assert.equal(h.calls.length, 1);
-  assert.equal(h.now, 6000);
+  assert.equal(h.now, 11000);
 });
 
 for (const [label, alter] of [

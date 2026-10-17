@@ -4,7 +4,7 @@
 - 代码是无第三方依赖的 JavaScript。`src/core.js` 在 Node 与 Loon 共用；`src/presentation.js` 生成离线结果页；`src/loon.js` 只处理 Loon API。
 - 改代码后执行 `npm run check`（临时目录构建，不能改写发行文件）。`dist/` 必须由 `npm run build` 生成，默认固定为当前仓库的 GitHub Raw 地址；本地脚本需显式 `npm run build:local`。
 - Generic 入口成功和失败都通过 `$done({title, htmlMessage})` 返回非空 HTML 结果页；渲染异常时降级为 `{title, content}`。动态内容必须转义，关闭通知不影响结果页。
-- HEAD 不带 Range，允许正常的 200 并读取 Accept-Ranges 声明；真正 GET 分块仍须校验 206、Content-Range 和实际字节数。
+- HEAD 不带 Range，允许正常的 200；Accept-Ranges 是可缺省的建议，缺省时继续实际 Range GET 验证，显式 none 时停止。真正 GET 分块须校验 206、Content-Range 和实际字节数。
 - 预热和正式测量分别计时、排空在途；预热流量计入总预算但不能计入正式速度。两者的样本和耗时不能混算。
 - 单路指 1 个在途请求，并发指 N 个在途请求；不能把它们宣称为已验证的独立 TCP 连接。
 - 请求完成回调不能代表逐秒真实流量。禁止将完成回调桶称为实时速度、峰值或准确中位数。
@@ -17,3 +17,5 @@
 - 用户入口统一叫「速度测试」。默认先下载再上传，各自预热、计时和排空，总请求预算均分。已结束的失败可保留其他成功项，未知在途则停止后续测量。
 - 结果在原生弹窗中展示，使用无背景的内联字体和段落；不得依赖浏览器 grid/flex、CSS 变量或巨大数字。只放核心双向速度与总计，明细进日志。
 - README 首屏居中图标、徽标与安装按钮，内容简洁，不展示图标生成过程。
+
+- 预热失败时在弹窗直接展示 warmup.errors 的具体 HTTP/网络原因，不能用笼统阶段提示遮挡。原生字体使用明确的 Helvetica face，避免 iOS 富文本回退到衬线。

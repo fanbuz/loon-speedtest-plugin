@@ -108,7 +108,7 @@ test('回调缺失有兜底且不进入第二阶段，未知下载量不伪造�
   assert.equal(result.runs[0].unresolvedRequests, 1);
   assert.equal(result.runs[0].bytesPerSecond, null);
   assert.equal(result.runs.length, 1);
-  assert.equal(h.now, 9000);
+  assert.equal(h.now, 14000);
 });
 
 for (const [label, reply] of [

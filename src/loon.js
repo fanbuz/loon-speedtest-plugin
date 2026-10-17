@@ -27,7 +27,7 @@
   }
 
   Promise.resolve().then(function () {
-    log("速度测试 v0.2.0 | 脚本已加载");
+    log("速度测试 v0.2.1 | 脚本已加载");
     options = LoonSpeedtest.normalizeOptions(typeof $argument === "undefined" ? null : $argument);
     options.node = LoonSpeedtest.resolveTarget(options.node, typeof $environment === "undefined" ? null : $environment);
     return LoonSpeedtest.run(options, {
@@ -43,7 +43,13 @@
             insecure: false, alpn: "h1",
             headers: Object.assign({ "Cache-Control": "no-cache, no-store", "Accept-Encoding": "identity" }, spec.headers)
           }, function (error, response, data) {
-            if (error) { reject(new Error(String(error))); return; }
+            if (error) {
+              var detail = typeof error === "string" ? error : error.message || error.localizedDescription || error.description;
+              if (!detail) { try { detail = JSON.stringify(error); } catch (_) { detail = String(error); } }
+              var status = response && response.status;
+              reject(new Error(spec.method + " 请求失败：" + detail + (status ? "（HTTP " + status + "）" : "")));
+              return;
+            }
             var binary = Object.prototype.toString.call(data) === "[object Uint8Array]";
             resolve({ status: response && response.status, headers: response && response.headers, binary: binary, bytes: binary ? data.byteLength : null });
           });

@@ -30,3 +30,14 @@ test('比较模式每个方向分别显示单路和并发，未开始项不伪�
   result.runs=result.runs.slice(0,1);
   assert.match(view.render(result),/↑ 上传 · 未开始/);
 });
+
+test('预热失败直接显示底层 HTTP 错误，不用笼统阶段提示覆盖',()=>{
+  const result=fixture();
+  result.runs[1]={...result.runs[1],state:'failed',bytesPerSecond:null,
+    errors:['预热未完成，未开始正式测量','请求 #1：上传 HTTP 403'],
+    warmup:{state:'failed',errors:['请求 #1：上传 HTTP 403']}};
+  const html=view.render(result);
+  assert.match(html,/预热失败 · 请求 #1：上传 HTTP 403/);
+  assert.doesNotMatch(html,/预热未完成，未开始正式测量/);
+  assert.match(html,/<font face="Helvetica"/);
+});

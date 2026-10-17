@@ -1,4 +1,26 @@
-# v0.2.0 验证
+# v0.2.1 验证
+
+日期：2026-10-17。新版 Loon iOS 回归待完成。
+
+## 本次修复
+
+手机截图显示 Apple HEAD 200 未带 Accept-Ranges，v0.2.0 因此在任何 GET 之前误拒绝。RFC 9110 §14.3 明确允许未收到该声明时发 Range；现在普通 HEAD 200 缺省声明可继续实际 GET 206 / Content-Range / 长度校验，显式 none 则停止。
+
+上传错误被“预热未完成”遮挡是独立的展示缺陷；新版优先展示 warmup.errors，保留 HTTPClient 对象错误和响应状态。默认超时改为 10 秒；不能从已有截图确定 CF 上传失败的具体原因。iOS 截图仍出现衬线回退，改为显式 Helvetica face。
+
+## 自动化与流程
+
+64 项自动化测试和构建语法通过。新增覆盖缺少范围声明的 Apple/自定义 GET 成功、GET 200 拒绝、显式 none、完整模拟 Loon 的 Apple 成功/CF 403 部分结果、预热具体错误及对象错误详情。
+
+本地 HTTP 服务故意省略 HEAD 的 Accept-Ranges，仍正确提供 GET 206 并完整读取 POST，用于完整复现此故障；真实 Apple 与 CF 流程的结果记录在发布工作记录中。Mac 网络和模拟接口不代表已验收用户手机节点。
+
+## 协议依据
+
+[HTTP Semantics §14.3 Accept-Ranges](https://www.rfc-editor.org/rfc/rfc9110.html#section-14.3)。该声明可缺省，也不能保证后续服务器一定返回分段响应，所以仍严格检查实际 GET。没有对失败请求做重试或主动切整文件。
+
+---
+
+# v0.2.0 历史验证
 
 日期：2026-10-17。Loon 真机回归待完成。
 

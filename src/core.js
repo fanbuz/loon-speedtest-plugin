@@ -74,7 +74,7 @@
       durationMs: numberOption(raw.duration, 10, 3, 30, "duration", true) * 1000,
       chunkBytes: numberOption(raw.chunkKB, 1000, 64, 4000, "chunkKB", true) * 1000,
       maxBytes: numberOption(raw.maxMB, 64, 4, 256, "maxMB", true) * MB,
-      requestTimeoutMs: numberOption(raw.requestTimeout, 5, 1, 15, "requestTimeout", true) * 1000,
+      requestTimeoutMs: numberOption(raw.requestTimeout, 10, 1, 15, "requestTimeout", true) * 1000,
       warmupMs: numberOption(raw.warmup, 2, 0, 5, "warmup", true) * 1000,
       notify: raw.notify !== false && raw.notify !== "false"
     };
@@ -145,8 +145,12 @@
           validateRange(response, Number(match[1]) + 1);
         } else if (status !== 200) {
           throw new Error("HEAD 返回 HTTP " + status);
+        } else if (ranges && /^\s*none\s*$/i.test(ranges)) {
+          throw new Error("测速源明确声明 Accept-Ranges: none；未请求下载正文");
         } else if (!ranges || !/(^|,)\s*bytes\s*(,|$)/i.test(ranges)) {
-          throw new Error("HEAD 200 是正常响应，但未声明 Accept-Ranges: bytes；未继续下载正文");
+          // RFC 9110 §14.3: Accept-Ranges is advice, not a prerequisite.
+          // Only the actual GET 206, Content-Range and body length prove support.
+          if (runtime.log) runtime.log("HEAD 未声明字节范围能力；继续用 Range GET 的实际响应校验");
         }
         if (length != null && (!/^\d+$/.test(length) || Number(length) <= 0)) throw new Error("HEAD 返回的文件大小无效");
         settle(null, { status: status, acceptRanges: ranges, contentLength: length });
@@ -313,7 +317,7 @@
       if (result.state !== "ok") break;
     }
     return {
-      version: "0.2.0", direction: options.direction, mode: options.mode, node: options.node, source: options.testUrl, testSource: options.testSource, sourceInfo: sourceInfo,
+      version: "0.2.1", direction: options.direction, mode: options.mode, node: options.node, source: options.testUrl, testSource: options.testSource, sourceInfo: sourceInfo,
       state: runs.length === levels.length && runs.every(function (result) { return result.state === "ok"; }) ? "ok" : "failed",
       budgetBytes: options.maxBytes, runs: runs,
       comparisonRatio: runs.length === 2 && runs.every(function (result) { return result.state === "ok"; }) && runs[0].bytesPerSecond > 0 ? runs[1].bytesPerSecond / runs[0].bytesPerSecond : null
@@ -351,7 +355,7 @@
     }
     var runs = [].concat.apply([], parts.map(function (part) { return part.runs; }));
     var ok = parts.length === directions.length && parts.every(function (part) { return part.state === "ok"; });
-    return { version: "0.2.0", direction: "both", mode: options.mode, node: options.node,
+    return { version: "0.2.1", direction: "both", mode: options.mode, node: options.node,
       testSource: options.testSource, uploadSource: options.uploadSource, source: options.testUrl, uploadUrl: options.uploadUrl,
       state: ok ? "ok" : runs.some(function (item) { return item.state === "ok"; }) ? "partial" : "failed",
       budgetBytes: options.maxBytes, runs: runs, comparisonRatio: null };

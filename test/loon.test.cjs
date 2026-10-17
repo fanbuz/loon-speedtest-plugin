@@ -24,11 +24,11 @@ async function execute({ argument, environment, storageThrows = false, notificat
     const range = opts.headers && opts.headers.Range;
     const bytes = method === 'POST' ? opts.body.byteLength : range ? Number(range.split('-')[1]) + 1 : Number(new URL(opts.url).searchParams.get('bytes'));
     h.runtime.request({ ...opts, method, bytes }).then(response => {
-      callback(null, { status: response.status, headers: response.headers }, dataType === 'string' ? 'not binary' : new Uint8Array(response.bytes));
+      callback(null, { status: response.status, headers: response.headers }, response.data !== undefined ? response.data : dataType === 'string' ? 'not binary' : response.uploadBytes != null ? new Uint8Array(Buffer.from(JSON.stringify({ Bytes: response.uploadBytes }))) : new Uint8Array(response.bytes));
     }, error => callback(error.message));
   }
   const context = {
-    $argument: typeof argument === 'string' ? 'direction=download&warmup=0&' + argument : argument && { direction: 'download', warmup: 0, ...argument },
+    $argument: typeof argument === 'string' ? 'direction=download&test_source=cf&upload_source=cf&warmup=0&' + argument : argument && { direction: 'download', test_source: 'cf', upload_source: 'cf', warmup: 0, ...argument },
     $environment: environment,
     Date: { now: h.runtime.now }, setTimeout: h.runtime.setTimeout,
     console: { log: h.runtime.log },
@@ -146,4 +146,28 @@ test('HTTPClient 回调对象错误保留具体说明及状态，不显示 objec
   const r=await execute({argument:{node:'DIRECT',direction:'upload',warmup:2,maxMB:4},callbackError:{message:'连接被重置'}});
   assert.match(r.doneResults[0].htmlMessage,/预热失败 · 请求 #1：POST 请求失败：连接被重置（HTTP 502）/);
   assert.doesNotMatch(r.doneResults[0].htmlMessage,/object Object/);
+});
+
+test('Apple 上传二进制 JSON 回执经过真实适配层解析，双向均完成',async()=>{
+  const r=await execute({argument:{node:'节点 A',direction:'both',test_source:'apple',upload_source:'apple',maxMB:4}});
+  assert.equal(r.saved[0].value.state,'ok');
+  assert.ok(r.saved[0].value.runs.every(x=>x.testSource==='apple' && x.completedBytes===2000000));
+  assert.ok(r.requests.filter(x=>x.method==='POST').every(x=>x.url.endsWith('/slurp')));
+});
+
+test('Apple 上传字符串 JSON 回执可用，缺失、伪类型、损坏或过大回执拒绝计数',async()=>{
+  for(const [data,ok] of [[JSON.stringify({Bytes:1000000}),true],['{"Bytes":"1000000"}',false],['not json',false],[' '.repeat(4097)+'{"Bytes":1000000}',false],['{}',false]]) {
+    const r=await execute({argument:{node:'DIRECT',direction:'upload',upload_source:'apple',maxMB:4},reply:()=>({status:200,bytes:0,data})});
+    assert.equal(r.saved[0].value.state,ok?'ok':'failed');
+    if(!ok) assert.match(r.doneResults[0].htmlMessage,/Apple 上传字节回执不符/);
+  }
+});
+
+test('对端关闭的弹窗显示短中文原因，日志与保存结果保留完整诊断',async()=>{
+  const detail='Error Domain=LNGCDAsyncSocketErrorDomain Code=7 "Socket closed by remote peer" UserInfo={NSLocalizedDescription=Socket closed by remote peer}';
+  const r=await execute({argument:{node:'DIRECT',direction:'upload',warmup:2,maxMB:4},callbackError:detail});
+  assert.match(r.doneResults[0].htmlMessage,/预热失败 · 连接被对端关闭/);
+  assert.doesNotMatch(r.doneResults[0].htmlMessage,/LNGCDAsyncSocketErrorDomain/);
+  assert.match(r.saved[0].value.runs[0].warmup.errors[0],/LNGCDAsyncSocketErrorDomain/);
+  assert.ok(r.logs.some(x=>x.includes(detail)));
 });

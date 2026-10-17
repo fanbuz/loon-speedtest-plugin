@@ -7,7 +7,9 @@ import core from '../src/core.js';
 const args = process.argv.slice(2);
 let local = false;
 let omitAcceptRanges = false;
-let source = 'cf';
+let source = 'apple';
+let uploadSource = 'apple';
+let uploadUrl;
 let testUrl;
 let warmup = 2;
 let direction = 'both';
@@ -16,10 +18,12 @@ while (args.length) {
   if (option === '--local') local = true;
   else if (option === '--omit-accept-ranges') omitAcceptRanges = true;
   else if (option === '--source' && args.length) source = args.shift();
+  else if (option === '--upload-source' && args.length) uploadSource = args.shift();
+  else if (option === '--upload-url' && args.length) uploadUrl = args.shift();
   else if (option === '--test-url' && args.length) testUrl = args.shift();
   else if (option === '--direction' && args.length) direction = args.shift();
   else if (option === '--warmup' && args.length) warmup = args.shift();
-  else throw new Error('用法：npm run smoke -- [--local] [--source cf|apple|custom] [--test-url URL] [--warmup 秒] [--direction both|download|upload]');
+  else throw new Error('用法：npm run smoke -- [--local] [--source cf|apple|custom] [--test-url URL] [--upload-source apple|cf|custom] [--upload-url URL] [--warmup 秒] [--direction both|download|upload]');
 }
 if (omitAcceptRanges && !local) throw new Error('--omit-accept-ranges 只能用于本地服务');
 let server;
@@ -30,7 +34,8 @@ if (local) {
       req.on('data', chunk => { received += chunk.length; });
       req.on('end', () => {
         if (received !== Number(req.headers['content-length'])) { res.writeHead(400); res.end(); return; }
-        res.writeHead(200, { 'Content-Length': '0' }); res.end();
+        const receipt = JSON.stringify({ Bytes: received });
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(receipt) }); res.end(receipt);
       });
       return;
     }
@@ -51,7 +56,7 @@ if (local) {
     server.listen(0, '127.0.0.1', resolve);
   });
 }
-const options = core.normalizeOptions({ node: 'DIRECT', mode: 'compare', maxMB: 4, chunkKB: 250, duration: 3, test_source: source, test_url: testUrl, warmup, direction });
+const options = core.normalizeOptions({ node: 'DIRECT', mode: 'compare', maxMB: 4, chunkKB: 250, duration: 3, test_source: source, test_url: testUrl, upload_source: uploadSource, upload_url: uploadUrl, warmup, direction });
 try {
   const result = await core.run(options, {
     now: () => performance.now(),
@@ -64,13 +69,19 @@ try {
         agent: false, headers: { 'Accept-Encoding': 'identity', 'Cache-Control': 'no-cache, no-store', ...spec.headers, ...(spec.body ? { 'Content-Length': spec.body.byteLength } : {}) }
       }, response => {
         let bytes = 0;
+        const chunks = [];
         const fail = error => { request.destroy(); reject(error); };
         response.on('data', chunk => {
           bytes += chunk.length;
+          if (spec.method === 'POST' && bytes <= 65536) chunks.push(chunk);
           if (bytes > (spec.method === 'POST' ? 65536 : spec.bytes)) fail(new Error('服务器返回的数据超过请求大小'));
         });
         response.on('error', fail);
-        response.on('end', () => resolve({ status: response.statusCode, headers: response.headers, binary: true, bytes }));
+        response.on('end', () => {
+          let uploadBytes = null;
+          if (spec.method === 'POST' && bytes <= 4096) { try { uploadBytes = JSON.parse(Buffer.concat(chunks).toString('utf8')).Bytes; } catch {} }
+          resolve({ status: response.statusCode, headers: response.headers, binary: true, bytes, uploadBytes });
+        });
       });
       // Wall-clock deadline; setTimeout() on ClientRequest alone only caps idle time.
       const timer = setTimeout(() => request.destroy(new Error('Node 冒烟请求超时')), spec.timeout);

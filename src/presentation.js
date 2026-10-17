@@ -10,6 +10,9 @@
       return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
     });
   }
+  function conciseError(message) {
+    return /Socket closed by remote peer/i.test(message) ? '连接被对端关闭，请切换测速源或查看脚本日志' : message;
+  }
   function sourceName(source) { return source === "apple" ? "Apple CDN" : source === "custom" ? "自定义" : "Cloudflare"; }
   function text(value, size, weight, color) {
     return '<font face="Helvetica" color="' + (color || '#777777') + '"><span style="font-family:Helvetica;font-size:' + size + 'px;font-weight:' + (weight || 400) + ';color:' + (color || '#777777') + '">' + escape(value) + '</span></font>';
@@ -40,7 +43,7 @@
         if (!valid) {
           var warmupFailed = run.warmup && run.warmup.state !== 'ok';
           var errors = warmupFailed && run.warmup.errors && run.warmup.errors.length ? run.warmup.errors : run.errors || [];
-          lines.push(text((warmupFailed ? '预热失败 · ' : '') + (errors[0] || '本项未完成'), 12));
+          lines.push(text((warmupFailed ? '预热失败 · ' : '') + conciseError(errors[0] || '本项未完成'), 12));
         }
         if ((run.warnings || []).length) warnings.push('样本较短，建议提高流量预算复测');
         elapsed += run.totalElapsedMs == null ? run.elapsedMs || 0 : run.totalElapsedMs;

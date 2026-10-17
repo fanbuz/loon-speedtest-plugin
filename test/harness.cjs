@@ -23,6 +23,7 @@ function harness({ delay = 1000, reply, hang = false } = {}) {
             status: 200, binary: true, bytes: 0,
             headers: { 'Accept-Ranges': 'bytes', 'Content-Length': '4294967296' }
           } : {
+            uploadBytes: spec.method === 'POST' ? spec.bytes : undefined,
             status: range ? 206 : 200, binary: true, bytes: spec.method === 'HEAD' ? 0 : spec.bytes,
             headers: range ? { 'Content-Range': 'bytes 0-' + (spec.bytes - 1) + '/4294967296', 'Content-Length': String(spec.bytes) } : {}
           };

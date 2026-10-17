@@ -2,13 +2,13 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const core = require('../src/core.js');
 const harness = require('./harness.cjs');
-const options = overrides => core.normalizeOptions({ direction: 'download', node: '测试节点', duration: 3, maxMB: 4, warmup: 0, ...overrides });
+const options = overrides => core.normalizeOptions({ test_source: 'cf', upload_source: 'cf', direction: 'download', node: '测试节点', duration: 3, maxMB: 4, warmup: 0, ...overrides });
 const goodRange = spec => ({
   status: spec.method === 'HEAD' ? 200 : 206, binary: true, bytes: spec.method === 'HEAD' ? 0 : spec.bytes,
   headers: spec.method === 'HEAD' ? { 'Accept-Ranges': 'bytes', 'Content-Length': '4294967296' } : { 'Content-Range': 'bytes 0-' + (spec.bytes - 1) + '/4294967296', 'Content-Length': String(spec.bytes) }
 });
 
-test('默认 CF；预设源完全忽略 test_url，只有自定义才校验并使用它', () => {
+test('CF 预设完全忽略 test_url，只有自定义才校验并使用它', () => {
   assert.equal(options({ test_url: { invalid: true } }).testSource, 'cf');
   assert.equal(options({ test_source: 'Apple CDN', test_url: 'not a URL' }).testUrl, 'https://mensura.cdn-apple.com/api/v1/gm/large');
   assert.equal(options({ test_source: '自定义', test_url: 'https://example.com/test.bin' }).testUrl, 'https://example.com/test.bin');

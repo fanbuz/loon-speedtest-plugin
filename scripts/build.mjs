@@ -33,6 +33,7 @@ if (baseUrl) {
   remoteScript.searchParams.set('v', version);
   scriptPath = remoteScript.href;
 }
+const iconUrl = baseUrl ? new URL('icon.png?v=' + version, baseUrl).href : null;
 const icon = await readFile(path.join(root, 'assets/icon.png'));
 const destination = outputDir ? path.resolve(outputDir) : path.join(root, 'dist');
 await mkdir(destination, { recursive: true });
@@ -41,7 +42,7 @@ const plugin = [
   '#!name = 速度测试',
   '#!author = fanbuz',
   '#!homepage = https://github.com/fanbuz/loon-speedtest-plugin',
-  ...(baseUrl ? ['#!icon = ' + new URL('icon.png', baseUrl).href] : []),
+  ...(baseUrl ? ['#!icon = ' + iconUrl] : []),
   '#!desc = v' + version + ' 上传与下载速度测试，支持单路、并发和对比；默认合计 64 MB。',
   '#!loon_version = 3.5.1(983)',
   '#!date = 2026-10-17',
@@ -51,9 +52,10 @@ const plugin = [
   'direction = select,"both","download","upload",type=string,tag=测试项目,desc=both 下载和上传 / download 仅下载 / upload 仅上传',
   'mode = select,"single","concurrent","compare",type=string,tag=测速模式,desc=single 单路 / concurrent 并发 / compare 顺序对比',
   'node = input,"",type=string,tag=节点或策略组,desc=填写精确名称；留空时从运行入口获取；直连填 DIRECT',
-  'test_source = select,"Cloudflare","Apple CDN","自定义",type=string,tag=下载测速源,desc=上传默认 Cloudflare；下载可选 Apple CDN 或自定义',
+  'test_source = select,"Apple CDN","Cloudflare","自定义",type=string,tag=下载测速源,desc=下载来源；自定义时填写下方 test_url',
   'test_url = input,"",type=string,tag=自定义下载地址 test_url,desc=仅选择自定义时有效；支持 HEAD 和 Range GET；范围声明可缺省',
-  'upload_url = input,"",type=string,tag=自定义上传地址,desc=仅自定义源时生效；留空用 Cloudflare；须为接收 POST 的测速接口',
+  'upload_source = select,"Apple CDN","Cloudflare","自定义",type=string,tag=上传测速源,desc=上传来源；与下载独立选择',
+  'upload_url = input,"",type=string,tag=自定义上传地址,desc=仅上传源选自定义时有效；须为接收二进制 POST 的测速接口',
   'concurrency = select,4,2,8,type=number,tag=并发请求数,desc=仅 concurrent 和 compare 模式使用',
   'duration = select,10,5,15,30,type=number,tag=正式测量时长（秒）,desc=不含预热；到期停止发新请求并等待在途请求完成',
   'warmup = select,2,0,1,3,5,type=number,tag=预热窗口（秒）,desc=到时停发并收尾；最多占本轮预算四分之一；不计平均速度',
@@ -63,7 +65,7 @@ const plugin = [
   'notify = switch,true,type=boolean,tag=完成后通知',
   '',
   '[Script]',
-  'generic then script(' + JSON.stringify(scriptPath) + ', {${direction}, ${mode}, ${node}, ${test_source}, ${test_url}, ${upload_url}, ${concurrency}, ${duration}, ${warmup}, ${chunkKB}, ${maxMB}, ${requestTimeout}, ${notify}}) with tag="速度测试", img_url=' + JSON.stringify(baseUrl ? new URL('icon.png', baseUrl).href : 'speedometer.system') + ', timeout=300',
+  'generic then script(' + JSON.stringify(scriptPath) + ', {${direction}, ${mode}, ${node}, ${test_source}, ${test_url}, ${upload_source}, ${upload_url}, ${concurrency}, ${duration}, ${warmup}, ${chunkKB}, ${maxMB}, ${requestTimeout}, ${notify}}) with tag="速度测试", img_url=' + JSON.stringify('arrow.up.arrow.down.system') + ', timeout=300',
   ''
 ].join('\n');
 await writeFile(path.join(destination, 'LoonSpeedtest.plugin'), plugin);

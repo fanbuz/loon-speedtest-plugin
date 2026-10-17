@@ -27,7 +27,7 @@
   }
 
   Promise.resolve().then(function () {
-    log("速度测试 v0.2.1 | 脚本已加载");
+    log("速度测试 v0.3.0 | 脚本已加载");
     options = LoonSpeedtest.normalizeOptions(typeof $argument === "undefined" ? null : $argument);
     options.node = LoonSpeedtest.resolveTarget(options.node, typeof $environment === "undefined" ? null : $environment);
     return LoonSpeedtest.run(options, {
@@ -51,7 +51,17 @@
               return;
             }
             var binary = Object.prototype.toString.call(data) === "[object Uint8Array]";
-            resolve({ status: response && response.status, headers: response && response.headers, binary: binary, bytes: binary ? data.byteLength : null });
+            var uploadBytes = null;
+            if (spec.method === "POST" && data != null && (binary ? data.byteLength : typeof data === "string" ? data.length : 4097) <= 4096) {
+              // Apple's small ASCII JSON reply contains the number of bytes received.
+              // Avoid depending on TextDecoder, which is not a documented Loon global.
+              try {
+                var json = typeof data === "string" ? data : Array.prototype.map.call(data, function (byte) { return String.fromCharCode(byte); }).join("");
+                var receipt = JSON.parse(json);
+                if (receipt && typeof receipt.Bytes === "number" && isFinite(receipt.Bytes) && receipt.Bytes >= 0 && Math.floor(receipt.Bytes) === receipt.Bytes) uploadBytes = receipt.Bytes;
+              } catch (_) { /* Non-Apple endpoints may have an empty or non-JSON response. */ }
+            }
+            resolve({ status: response && response.status, headers: response && response.headers, binary: binary, bytes: binary ? data.byteLength : null, uploadBytes: uploadBytes });
           });
         });
       }

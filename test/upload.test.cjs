@@ -2,16 +2,16 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const core = require('../src/core.js');
 const harness = require('./harness.cjs');
-const options = overrides => core.normalizeOptions({ node: '测试节点', duration: 3, maxMB: 8, chunkKB: 1000, warmup: 0, ...overrides });
+const options = overrides => core.normalizeOptions({ test_source: 'cf', upload_source: 'cf', node: '测试节点', duration: 3, maxMB: 8, chunkKB: 1000, warmup: 0, ...overrides });
 const success = spec => ({ status: 200, binary: true, bytes: spec.method === 'POST' ? 0 : spec.bytes });
 
-test('默认下载上传；上传预设忽略自定义字段，单独上传不要求下载 URL', () => {
+test('默认下载上传；独立上传预设忽略自定义字段，单独上传不要求下载 URL', () => {
   assert.equal(options().direction, 'both');
   assert.equal(options({ test_source: 'apple', upload_url: {} }).uploadUrl, 'https://speed.cloudflare.com/__up');
   assert.equal(options({ direction: 'upload', test_source: 'custom' }).uploadUrl, 'https://speed.cloudflare.com/__up');
   assert.equal(options({ direction: 'download', test_source: 'custom', test_url: 'https://a.test/file', upload_url: {} }).uploadSource, 'cf');
   assert.throws(() => options({ direction: 'all' }));
-  assert.throws(() => options({ direction: 'upload', test_source: 'custom', upload_url: 'https://u:p@a.test/up' }));
+  assert.throws(() => options({ direction: 'upload', upload_source: 'custom', upload_url: 'https://u:p@a.test/up' }));
 });
 
 test('上传统计成功 POST 的二进制请求体，空响应不影响计数，不做 HEAD 或 Range', async () => {
@@ -76,7 +76,7 @@ test('Apple 下载与 CF 上传分源标记；自定义上传 URL 完整保留�
   assert.deepEqual(r.runs.map(x=>x.testSource),['apple','cf']);
   const custom=harness({reply:success});
   const url='https://example.com/up?token=example';
-  await custom.settle(core.run(options({ direction:'upload',test_source:'custom',upload_url:url }),custom.runtime));
+  await custom.settle(core.run(options({ direction:'upload',upload_source:'custom',upload_url:url }),custom.runtime));
   assert.ok(custom.calls.every(x=>x.url===url && !x.headers.Range));
 });
 
@@ -96,4 +96,36 @@ test('双向 Apple HEAD 失联时不启动上传；明确不支持 Range 仍可�
   const unsupported=harness({reply:spec=>spec.method==='HEAD'?{status:200,headers:{'Accept-Ranges':'none'}}:success(spec)});
   const partial=await unsupported.settle(core.run(options({test_source:'apple'}),unsupported.runtime));
   assert.equal(partial.state,'partial');assert.equal(partial.runs[1].direction,'upload');
+});
+
+test('下载与上传默认 Apple CDN，独立选择源；自定义字段仅对选中的自定义方向有效', () => {
+  const defaults = core.normalizeOptions({ node:'DIRECT' });
+  assert.equal(defaults.testSource,'apple');
+  assert.equal(defaults.uploadSource,'apple');
+  assert.equal(defaults.uploadUrl,'https://mensura.cdn-apple.com/api/v1/gm/slurp');
+  assert.equal(core.normalizeOptions({test_source:'Cloudflare',upload_url:{}}).uploadSource,'apple');
+  assert.equal(core.normalizeOptions({upload_source:'Cloudflare',upload_url:{}}).uploadSource,'cf');
+  const mixed=core.normalizeOptions({test_source:'Apple CDN',upload_source:'自定义',upload_url:'https://a.test/up?key=example',test_url:{}});
+  assert.equal(mixed.testSource,'apple');assert.equal(mixed.uploadSource,'custom');assert.equal(mixed.uploadUrl,'https://a.test/up?key=example');
+  assert.throws(()=>core.normalizeOptions({upload_source:'custom'}),/upload_url/);
+  assert.throws(()=>core.normalizeOptions({upload_source:'custom',upload_url:'https://u:p@a.test/up'}),/upload_url/);
+  assert.throws(()=>core.normalizeOptions({upload_source:'unknown'}),/upload_source/);
+  assert.doesNotThrow(()=>core.normalizeOptions({direction:'download',upload_source:'custom',upload_url:{}}));
+  const legacy=core.normalizeOptions({direction:'upload',test_source:'custom',upload_url:'https://a.test/up'});
+  assert.equal(legacy.uploadSource,'custom');assert.equal(legacy.uploadUrl,'https://a.test/up');
+});
+
+test('Apple 上传校验服务端 Bytes 回执，速度仍按请求体和本地墙钟计算',async()=>{
+  const h=harness({delay:1000,reply:spec=>({status:200,binary:true,bytes:42,uploadBytes:spec.body.byteLength})});
+  const r=await h.settle(core.run(options({direction:'upload',upload_source:'apple'}),h.runtime));
+  assert.equal(r.state,'ok');assert.equal(r.runs[0].completedBytes,3000000);assert.equal(r.runs[0].bytesPerSecond,1000000);
+  assert.ok(h.calls.every(x=>x.method==='POST' && x.url==='https://mensura.cdn-apple.com/api/v1/gm/slurp' && !x.headers.Range && !x.headers.Origin));
+  assert.match(core.summary(r),/上传 · Apple CDN/);
+});
+
+for(const receipt of [undefined,0,999999,'1000000']) test('Apple 缺少或错误字节回执不能成为上传速度：'+String(receipt),async()=>{
+  const h=harness({reply:()=>({status:200,binary:true,bytes:1000000,uploadBytes:receipt})});
+  const r=await h.settle(core.run(options({direction:'upload',upload_source:'apple'}),h.runtime));
+  assert.equal(r.state,'failed');assert.equal(r.runs[0].completedBytes,0);assert.equal(r.runs[0].bytesPerSecond,null);
+  assert.match(r.runs[0].errors[0],/Apple 上传字节回执不符/);assert.equal(h.calls.length,1);
 });

@@ -9,6 +9,7 @@
   var SOURCE = "https://speed.cloudflare.com/__down";
   var UPLOAD_SOURCE = "https://speed.cloudflare.com/__up";
   var APPLE_SOURCE = "https://mensura.cdn-apple.com/api/v1/gm/large";
+  var APPLE_UPLOAD_SOURCE = "https://mensura.cdn-apple.com/api/v1/gm/slurp";
   var MB = 1000000;
 
   function parseArgument(value) {
@@ -44,7 +45,7 @@
     if (["single", "concurrent", "compare"].indexOf(mode) < 0) throw new Error("mode 应为 single、concurrent 或 compare");
     if (raw.node != null && typeof raw.node !== "string") throw new Error("node 需要是节点或策略组名称");
     var sources = { cf: "cf", Cloudflare: "cf", apple: "apple", "Apple CDN": "apple", custom: "custom", "自定义": "custom" };
-    var sourceName = raw.test_source == null || raw.test_source === "" ? "cf" : raw.test_source;
+    var sourceName = raw.test_source == null || raw.test_source === "" ? "apple" : raw.test_source;
     if (typeof sourceName !== "string") throw new Error("test_source 需要是测速源名称");
     var testSource = Object.prototype.hasOwnProperty.call(sources, sourceName) ? sources[sourceName] : null;
     if (!testSource) throw new Error("test_source 应为 Cloudflare、Apple CDN 或 自定义");
@@ -55,8 +56,15 @@
       }
       testUrl = raw.test_url.trim();
     }
-    var uploadUrl = UPLOAD_SOURCE;
-    if (testSource === "custom" && direction !== "download" && raw.upload_url != null && raw.upload_url !== "") {
+    var uploadName = raw.upload_source;
+    if (uploadName == null || uploadName === "") {
+      // Keep existing installations with an explicitly configured custom upload URL.
+      uploadName = testSource === "custom" && typeof raw.upload_url === "string" && raw.upload_url.trim() ? "custom" : "apple";
+    }
+    var uploadSource = typeof uploadName === "string" && Object.prototype.hasOwnProperty.call(sources, uploadName) ? sources[uploadName] : null;
+    if (!uploadSource) throw new Error("upload_source 应为 Apple CDN、Cloudflare 或 自定义");
+    var uploadUrl = uploadSource === "cf" ? UPLOAD_SOURCE : APPLE_UPLOAD_SOURCE;
+    if (uploadSource === "custom" && direction !== "download") {
       if (typeof raw.upload_url !== "string" || !/^https?:\/\/[^\s/?#@]+(?:[/?][^\s#]*)?$/i.test(raw.upload_url.trim())) {
         throw new Error("upload_url 需要有效的 HTTP(S) POST 接收地址");
       }
@@ -65,7 +73,7 @@
     return {
       direction: direction,
       uploadUrl: uploadUrl,
-      uploadSource: uploadUrl === UPLOAD_SOURCE ? "cf" : "custom",
+      uploadSource: uploadSource,
       mode: mode,
       node: (raw.node || "").trim(),
       testSource: testSource,
@@ -228,9 +236,11 @@
           if (finished) return;
           var transferred;
           if (config.direction === "upload") {
-            // A successful POST measures the submitted payload, never its small response.
-            // HTTP success is not an independent server-side byte receipt.
+            // Always count the binary request payload, never the small response body.
             if (!response || (response.status !== 200 && response.status !== 204)) throw new Error("上传 HTTP " + (response ? response.status : "无响应"));
+            if (config.testSource === "apple" && response.uploadBytes !== spec.body.byteLength) {
+              throw new Error("Apple 上传字节回执不符：期望 " + spec.body.byteLength + "，实际 " + (response.uploadBytes == null ? "缺少 Bytes 回执" : response.uploadBytes));
+            }
             transferred = spec.body.byteLength;
           } else {
             if (config.testSource === "cf") {
@@ -317,7 +327,7 @@
       if (result.state !== "ok") break;
     }
     return {
-      version: "0.2.1", direction: options.direction, mode: options.mode, node: options.node, source: options.testUrl, testSource: options.testSource, sourceInfo: sourceInfo,
+      version: "0.3.0", direction: options.direction, mode: options.mode, node: options.node, source: options.testUrl, testSource: options.testSource, sourceInfo: sourceInfo,
       state: runs.length === levels.length && runs.every(function (result) { return result.state === "ok"; }) ? "ok" : "failed",
       budgetBytes: options.maxBytes, runs: runs,
       comparisonRatio: runs.length === 2 && runs.every(function (result) { return result.state === "ok"; }) && runs[0].bytesPerSecond > 0 ? runs[1].bytesPerSecond / runs[0].bytesPerSecond : null
@@ -355,7 +365,7 @@
     }
     var runs = [].concat.apply([], parts.map(function (part) { return part.runs; }));
     var ok = parts.length === directions.length && parts.every(function (part) { return part.state === "ok"; });
-    return { version: "0.2.1", direction: "both", mode: options.mode, node: options.node,
+    return { version: "0.3.0", direction: "both", mode: options.mode, node: options.node,
       testSource: options.testSource, uploadSource: options.uploadSource, source: options.testUrl, uploadUrl: options.uploadUrl,
       state: ok ? "ok" : runs.some(function (item) { return item.state === "ok"; }) ? "partial" : "failed",
       budgetBytes: options.maxBytes, runs: runs, comparisonRatio: null };

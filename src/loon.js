@@ -21,13 +21,13 @@
   function notify(title, text) {
     if (options && !options.notify) return;
     if (typeof $notification !== "undefined") {
-      try { $notification.post("Loon 下载测速", title, text); }
+      try { $notification.post("速度测试", title, text); }
       catch (error) { log("通知未发送：" + String(error.message || error)); }
     }
   }
 
   Promise.resolve().then(function () {
-    log("Loon 下载测速 v0.1.2 | 脚本已加载");
+    log("速度测试 v0.2.0 | 脚本已加载");
     options = LoonSpeedtest.normalizeOptions(typeof $argument === "undefined" ? null : $argument);
     options.node = LoonSpeedtest.resolveTarget(options.node, typeof $environment === "undefined" ? null : $environment);
     return LoonSpeedtest.run(options, {
@@ -36,9 +36,9 @@
       log: log,
       request: function (spec) {
         return new Promise(function (resolve, reject) {
-          var method = spec.method === "HEAD" ? "head" : "get";
+          var method = spec.method === "POST" ? "post" : spec.method === "HEAD" ? "head" : "get";
           $httpClient[method]({
-            url: spec.url, node: spec.node, timeout: spec.timeout,
+            url: spec.url, node: spec.node, timeout: spec.timeout, body: spec.body,
             "binary-mode": true, "auto-redirect": false, "auto-cookie": false,
             insecure: false, alpn: "h1",
             headers: Object.assign({ "Cache-Control": "no-cache, no-store", "Accept-Encoding": "identity" }, spec.headers)
@@ -58,7 +58,7 @@
         if (!$persistentStore.write(JSON.stringify(result), "loon-speedtest:lastResult")) log("本次结果未保存到本地存储");
       } catch (error) { log("本地存储失败：" + String(error.message || error)); }
     }
-    var title = result.state === "ok" ? "测速完成" : "测速未完成";
+    var title = result.state === "ok" ? "速度测试" : result.state === "partial" ? "速度测试 · 部分完成" : "速度测试 · 未完成";
     notify(title, text);
     done(title, text, result);
   }).catch(function (error) {

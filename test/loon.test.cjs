@@ -18,13 +18,13 @@ async function execute({ argument, environment, storageThrows = false, notificat
   function requestWithMethod(method, opts, callback) {
     requests.push({ ...opts, method });
     const range = opts.headers && opts.headers.Range;
-    const bytes = range ? Number(range.split('-')[1]) + 1 : Number(new URL(opts.url).searchParams.get('bytes'));
+    const bytes = method === 'POST' ? opts.body.byteLength : range ? Number(range.split('-')[1]) + 1 : Number(new URL(opts.url).searchParams.get('bytes'));
     h.runtime.request({ ...opts, method, bytes }).then(response => {
       callback(null, { status: response.status, headers: response.headers }, dataType === 'string' ? 'not binary' : new Uint8Array(response.bytes));
     }, error => callback(error.message));
   }
   const context = {
-    $argument: typeof argument === 'string' ? 'warmup=0&' + argument : argument && { warmup: 0, ...argument },
+    $argument: typeof argument === 'string' ? 'direction=download&warmup=0&' + argument : argument && { direction: 'download', warmup: 0, ...argument },
     $environment: environment,
     Date: { now: h.runtime.now }, setTimeout: h.runtime.setTimeout,
     console: { log: h.runtime.log },
@@ -33,7 +33,8 @@ async function execute({ argument, environment, storageThrows = false, notificat
     $persistentStore: { write(value, key) { if (storageThrows) throw new Error('存储失败'); saved.push({ value: JSON.parse(value), key }); return true; } },
     $httpClient: {
       get: (opts, callback) => requestWithMethod('GET', opts, callback),
-      head: (opts, callback) => requestWithMethod('HEAD', opts, callback)
+      head: (opts, callback) => requestWithMethod('HEAD', opts, callback),
+      post: (opts, callback) => requestWithMethod('POST', opts, callback)
     }
   };
   vm.runInNewContext(script, context, { filename: 'loon-speedtest.js' });
@@ -45,8 +46,8 @@ async function execute({ argument, environment, storageThrows = false, notificat
 test('模拟 Loon API 验证 node/二进制参数、结果保存和单次结束', async () => {
   const result = await execute({ argument: { mode: 'compare', node: '节点 A', maxMB: 4, duration: 3 } });
   assert.equal(result.doneCount, 1);
-  assert.equal(result.doneResults[0].title, '测速完成');
-  assert.match(result.doneResults[0].htmlMessage, /单路下载/);
+  assert.equal(result.doneResults[0].title, '速度测试');
+  assert.match(result.doneResults[0].htmlMessage, /↓ 下载/);
   assert.match(result.doneResults[0].htmlMessage, /4 路并发/);
   assert.equal(result.notifications.length, 1);
   assert.equal(result.saved[0].key, 'loon-speedtest:lastResult');
@@ -76,7 +77,7 @@ test('存储与通知失败不影响脚本结束', async () => {
   const result = await execute({ argument: { node: 'DIRECT', maxMB: 4 }, storageThrows: true, notificationThrows: true });
   assert.equal(result.doneCount, 1);
   assert.ok(result.logs.some(line => line.includes('本地存储失败')));
-  assert.equal(result.doneResults[0].title, '测速完成');
+  assert.equal(result.doneResults[0].title, '速度测试');
   assert.ok(result.doneResults[0].htmlMessage.length > 0);
 });
 
@@ -85,7 +86,7 @@ test('Loon 未返回二进制时报告失败，不使用 Header 伪造下载量'
   assert.equal(result.saved[0].value.state, 'failed');
   assert.equal(result.saved[0].value.runs[0].completedBytes, 0);
   assert.equal(result.requests.length, 1);
-  assert.equal(result.doneResults[0].title, '测速未完成');
+  assert.equal(result.doneResults[0].title, '速度测试 · 未完成');
   assert.match(result.doneResults[0].htmlMessage, /不是 Uint8Array/);
 });
 
@@ -111,4 +112,15 @@ test('自定义源保留 test_url 的查询参数，不附加测速源私有参�
   const result = await execute({ argument: { node: 'DIRECT', test_source: '自定义', test_url: url, maxMB: 4 } });
   assert.ok(result.requests.every(request => request.url === url));
   assert.match(result.doneResults[0].htmlMessage, /自定义/);
+});
+
+test('Loon 默认双向通过 POST 发送 Uint8Array，显式节点、超时、部分成功和结果均可用', async () => {
+  const result=await execute({argument:{node:'节点 A',direction:'both',maxMB:4}});
+  assert.equal(result.doneCount,1);
+  assert.equal(result.saved[0].value.direction,'both');
+  assert.deepEqual(Array.from(result.saved[0].value.runs,x=>x.direction),['download','upload']);
+  const posts=result.requests.filter(x=>x.method==='POST');
+  assert.ok(posts.length>0);
+  assert.ok(posts.every(x=>Object.prototype.toString.call(x.body)==='[object Uint8Array]' && x.node==='节点 A' && x.timeout===5000 && x.headers['Content-Type']==='application/octet-stream'));
+  assert.match(result.doneResults[0].htmlMessage,/↑ 上传/);
 });

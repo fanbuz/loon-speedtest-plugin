@@ -7,6 +7,7 @@
   "use strict";
 
   var SOURCE = "https://speed.cloudflare.com/__down";
+  var UPLOAD_SOURCE = "https://speed.cloudflare.com/__up";
   var APPLE_SOURCE = "https://mensura.cdn-apple.com/api/v1/gm/large";
   var MB = 1000000;
 
@@ -37,6 +38,8 @@
 
   function normalizeOptions(input) {
     var raw = parseArgument(input);
+    var direction = raw.direction == null || raw.direction === "" ? "both" : raw.direction;
+    if (["both", "download", "upload"].indexOf(direction) < 0) throw new Error("direction 应为 both、download 或 upload");
     var mode = raw.mode == null || raw.mode === "" ? "single" : raw.mode;
     if (["single", "concurrent", "compare"].indexOf(mode) < 0) throw new Error("mode 应为 single、concurrent 或 compare");
     if (raw.node != null && typeof raw.node !== "string") throw new Error("node 需要是节点或策略组名称");
@@ -46,13 +49,23 @@
     var testSource = Object.prototype.hasOwnProperty.call(sources, sourceName) ? sources[sourceName] : null;
     if (!testSource) throw new Error("test_source 应为 Cloudflare、Apple CDN 或 自定义");
     var testUrl = testSource === "cf" ? SOURCE : APPLE_SOURCE;
-    if (testSource === "custom") {
+    if (testSource === "custom" && direction !== "upload") {
       if (typeof raw.test_url !== "string" || !/^https?:\/\/[^\s/?#@]+(?:[/?][^\s#]*)?$/i.test(raw.test_url.trim())) {
         throw new Error("选择自定义时请填写有效的 HTTP(S) test_url（不能含 URL 用户信息或片段）");
       }
       testUrl = raw.test_url.trim();
     }
+    var uploadUrl = UPLOAD_SOURCE;
+    if (testSource === "custom" && direction !== "download" && raw.upload_url != null && raw.upload_url !== "") {
+      if (typeof raw.upload_url !== "string" || !/^https?:\/\/[^\s/?#@]+(?:[/?][^\s#]*)?$/i.test(raw.upload_url.trim())) {
+        throw new Error("upload_url 需要有效的 HTTP(S) POST 接收地址");
+      }
+      uploadUrl = raw.upload_url.trim();
+    }
     return {
+      direction: direction,
+      uploadUrl: uploadUrl,
+      uploadSource: uploadUrl === UPLOAD_SOURCE ? "cf" : "custom",
       mode: mode,
       node: (raw.node || "").trim(),
       testSource: testSource,
@@ -103,7 +116,7 @@
   }
 
   function preflight(options, runtime) {
-    if (options.testSource === "cf") return Promise.resolve(null);
+    if (options.direction === "upload" || options.testSource === "cf") return Promise.resolve(null);
     if (runtime.log) runtime.log("检查 " + sourceLabel(options.testSource) + " 的范围能力声明（HEAD 不带 Range，不下载正文）");
     return new Promise(function (resolve, reject) {
       var settled = false;
@@ -112,7 +125,9 @@
         settled = true;
         if (error) reject(error); else resolve(info);
       }
-      runtime.setTimeout(function () { settle(new Error("测速源分段检查超时；没有发起正文下载")); }, options.requestTimeoutMs + 1000);
+      runtime.setTimeout(function () {
+        var error = new Error("测速源分段检查超时；没有发起正文下载"); error.unresolvedRequests = 1; settle(error);
+      }, options.requestTimeoutMs + 1000);
       Promise.resolve().then(function () {
         return runtime.request({ method: "HEAD", url: options.testUrl, node: options.node, timeout: options.requestTimeoutMs, bytes: 0, headers: {} });
       }).then(function (response) {
@@ -141,6 +156,7 @@
 
   function runPhase(config, runtime) {
     return new Promise(function (resolve) {
+      var transferName = config.direction === "upload" ? "上传" : "下载";
       var startedAt = runtime.now();
       var deadline = startedAt + config.durationMs;
       var active = 0;
@@ -163,11 +179,11 @@
         finished = true;
         var elapsedMs = Math.max(1, runtime.now() - startedAt);
         var state = incomplete ? "incomplete" : errors.length ? "failed" : successful ? "ok" : "failed";
-        if (!successful && !errors.length) errors.push("没有获得可用下载样本");
+        if (!successful && !errors.length) errors.push("没有获得可用" + transferName + "样本");
         var warnings = [];
         if (config.phase !== "warmup" && state === "ok" && elapsedMs < 2000) warnings.push("正式样本不足 2 秒；可提高数据预算后复测");
         var result = {
-          state: state, phase: config.phase, node: config.node, source: config.testUrl, testSource: config.testSource, concurrency: config.concurrency,
+          state: state, direction: config.direction, phase: config.phase, node: config.node, source: config.testUrl, testSource: config.testSource, concurrency: config.concurrency,
           startedAt: startedAt, elapsedMs: elapsedMs, targetDurationMs: config.durationMs,
           budgetBytes: config.maxBytes, scheduledBytes: scheduledBytes,
           completedBytes: completedBytes, requests: requests, successfulRequests: successful,
@@ -175,8 +191,8 @@
           stopReason: incomplete ? "callback-timeout" : errors.length ? "error" : scheduledBytes >= config.maxBytes ? "budget" : "duration",
           errors: errors, warnings: warnings, samples: samples
         };
-        log(modeLabel(config.concurrency) + phaseName + "结束 | " + state + " | 有效数据 " + (completedBytes / MB).toFixed(2) + " MB | 耗时 " + (elapsedMs / 1000).toFixed(2) + "s");
-        if (config.phase !== "warmup" && result.bytesPerSecond != null) log("正式平均应用层下载速度：" + formatRate(result.bytesPerSecond));
+        log(modeLabel(config.concurrency) + transferName + phaseName + "结束 | " + state + " | 有效数据 " + (completedBytes / MB).toFixed(2) + " MB | 耗时 " + (elapsedMs / 1000).toFixed(2) + "s");
+        if (config.phase !== "warmup" && result.bytesPerSecond != null) log("正式平均应用层" + transferName + "速度：" + formatRate(result.bytesPerSecond));
         resolve(result);
       }
 
@@ -196,26 +212,36 @@
         var requestId = requests;
         var requestStart = runtime.now();
         var spec = {
-          method: "GET",
-          phase: config.phase,
-          url: config.testSource === "cf" ? config.testUrl + "?bytes=" + bytes + "&loon_test=" + token + "-" + requestId : config.testUrl,
-          headers: config.testSource === "cf" ? {} : { Range: "bytes=0-" + (bytes - 1) },
+          method: config.direction === "upload" ? "POST" : "GET",
+          direction: config.direction, phase: config.phase,
+          url: config.direction === "upload" ? config.testUrl : config.testSource === "cf" ? config.testUrl + "?bytes=" + bytes + "&loon_test=" + token + "-" + requestId : config.testUrl,
+          headers: config.direction === "upload" ? Object.assign({ "Content-Type": "application/octet-stream" }, config.testSource === "cf" ? { "User-Agent": "Mozilla/5.0", "Origin": "https://speed.cloudflare.com" } : {}) : config.testSource === "cf" ? {} : { Range: "bytes=0-" + (bytes - 1) },
+          body: config.direction === "upload" ? config.uploadBody.subarray(0, bytes) : undefined,
           node: config.node, timeout: config.requestTimeoutMs,
           bytes: bytes, worker: worker, requestId: requestId
         };
         Promise.resolve().then(function () { return runtime.request(spec); }).then(function (response) {
           if (finished) return;
-          if (config.testSource === "cf") {
-            if (!response || response.status !== 200) throw new Error("HTTP " + (response ? response.status : "无响应"));
-          } else validateRange(response, bytes);
-          if (!response.binary) throw new Error("响应不是 Uint8Array；请检查 binary-mode 与 Loon 版本");
-          if (response.bytes !== bytes) throw new Error("响应字节数不符：期望 " + bytes + "，实际 " + response.bytes);
-          completedBytes += response.bytes;
+          var transferred;
+          if (config.direction === "upload") {
+            // A successful POST measures the submitted payload, never its small response.
+            // HTTP success is not an independent server-side byte receipt.
+            if (!response || (response.status !== 200 && response.status !== 204)) throw new Error("上传 HTTP " + (response ? response.status : "无响应"));
+            transferred = spec.body.byteLength;
+          } else {
+            if (config.testSource === "cf") {
+              if (!response || response.status !== 200) throw new Error("HTTP " + (response ? response.status : "无响应"));
+            } else validateRange(response, bytes);
+            if (!response.binary) throw new Error("响应不是 Uint8Array；请检查 binary-mode 与 Loon 版本");
+            if (response.bytes !== bytes) throw new Error("响应字节数不符：期望 " + bytes + "，实际 " + response.bytes);
+            transferred = response.bytes;
+          }
+          completedBytes += transferred;
           successful += 1;
-          samples.push({ requestId: requestId, worker: worker, bytes: response.bytes, startMs: requestStart - startedAt, endMs: runtime.now() - startedAt });
+          samples.push({ requestId: requestId, worker: worker, bytes: transferred, startMs: requestStart - startedAt, endMs: runtime.now() - startedAt });
           if (runtime.now() - lastProgress >= 1000) {
             lastProgress = runtime.now();
-            log(modeLabel(config.concurrency) + phaseName + " | " + ((runtime.now() - startedAt) / 1000).toFixed(1) + "s | 已完成 " + (completedBytes / MB).toFixed(2) + " MB（完成回调统计，非逐秒速率）");
+            log(modeLabel(config.concurrency) + transferName + phaseName + " | " + ((runtime.now() - startedAt) / 1000).toFixed(1) + "s | 已完成 " + (completedBytes / MB).toFixed(2) + " MB（完成回调统计，非逐秒速率）");
           }
         }).catch(function (error) {
           if (finished) return;
@@ -229,7 +255,7 @@
         });
       }
 
-      log("开始" + modeLabel(config.concurrency) + phaseName + " | 目标：" + config.node);
+      log("开始" + modeLabel(config.concurrency) + transferName + phaseName + " | 目标：" + config.node);
       log("源：" + config.testUrl + " | 发请求窗口 " + (config.durationMs / 1000) + "s | 请求数据预算 " + (config.maxBytes / MB) + " MB");
       // No clearTimeout/setInterval dependency; Loon releases timers at $done().
       runtime.setTimeout(function () {
@@ -241,7 +267,7 @@
       runtime.setTimeout(function () {
         if (!finished) {
           halted = true;
-          errors.push("在途请求未按时回调；部分下载量未知，本轮无有效速度结果");
+          errors.push("在途请求未按时回调；部分传输量未知，本轮无有效速度结果");
           finish(true);
         }
       }, config.durationMs + config.requestTimeoutMs + 1000);
@@ -249,7 +275,8 @@
     });
   }
 
-  async function run(options, runtime) {
+  async function runDirection(options, runtime) {
+    if (options.direction === "upload") options = Object.assign({}, options, { testUrl: options.uploadUrl, testSource: options.uploadSource });
     if (!options.node) throw new Error("测速必须指定目标 node");
     var sourceInfo = await preflight(options, runtime);
     var levels = options.mode === "compare" ? [1, options.concurrency] : [options.mode === "single" ? 1 : options.concurrency];
@@ -286,17 +313,54 @@
       if (result.state !== "ok") break;
     }
     return {
-      version: "0.1.2", mode: options.mode, node: options.node, source: options.testUrl, testSource: options.testSource, sourceInfo: sourceInfo,
+      version: "0.2.0", direction: options.direction, mode: options.mode, node: options.node, source: options.testUrl, testSource: options.testSource, sourceInfo: sourceInfo,
       state: runs.length === levels.length && runs.every(function (result) { return result.state === "ok"; }) ? "ok" : "failed",
       budgetBytes: options.maxBytes, runs: runs,
       comparisonRatio: runs.length === 2 && runs.every(function (result) { return result.state === "ok"; }) && runs[0].bytesPerSecond > 0 ? runs[1].bytesPerSecond / runs[0].bytesPerSecond : null
     };
   }
 
+  async function run(options, runtime) {
+    if (!options.node) throw new Error("测速必须指定目标 node");
+    var directions = options.direction === "both" ? ["download", "upload"] : [options.direction];
+    var uploadBody;
+    if (directions.indexOf("upload") >= 0) {
+      uploadBody = new Uint8Array(options.chunkBytes);
+      var seed = 0x6d2b79f5;
+      for (var n = 0; n < uploadBody.length; n += 1) {
+        seed ^= seed << 13; seed ^= seed >>> 17; seed ^= seed << 5;
+        uploadBody[n] = seed & 255;
+      }
+    }
+    if (directions.length === 1) return runDirection(Object.assign({}, options, { uploadBody: uploadBody }), runtime);
+    var parts = [];
+    for (var i = 0; i < directions.length; i += 1) {
+      var direction = directions[i];
+      try {
+        parts.push(await runDirection(Object.assign({}, options, {
+          direction: direction, maxBytes: Math.floor(options.maxBytes / directions.length), uploadBody: uploadBody
+        }), runtime));
+      } catch (error) {
+        parts.push({ state: "failed", runs: [{ direction: direction, concurrency: options.mode === "concurrent" ? options.concurrency : 1,
+          testSource: direction === "upload" ? options.uploadSource : options.testSource, state: "failed", bytesPerSecond: null,
+          completedBytes: 0, elapsedMs: 0, totalCompletedBytes: 0, totalElapsedMs: 0, totalScheduledBytes: 0,
+          unresolvedRequests: error.unresolvedRequests || 0, stopReason: "error", warnings: [], errors: [String(error.message || error)] }] });
+      }
+      var last = parts[parts.length - 1];
+      if (last.runs.some(function (item) { return item.unresolvedRequests > 0 || item.warmup && item.warmup.unresolvedRequests > 0; })) break;
+    }
+    var runs = [].concat.apply([], parts.map(function (part) { return part.runs; }));
+    var ok = parts.length === directions.length && parts.every(function (part) { return part.state === "ok"; });
+    return { version: "0.2.0", direction: "both", mode: options.mode, node: options.node,
+      testSource: options.testSource, uploadSource: options.uploadSource, source: options.testUrl, uploadUrl: options.uploadUrl,
+      state: ok ? "ok" : runs.some(function (item) { return item.state === "ok"; }) ? "partial" : "failed",
+      budgetBytes: options.maxBytes, runs: runs, comparisonRatio: null };
+  }
+
   function summary(result) {
-    var lines = ["目标：" + result.node, "测速源：" + sourceLabel(result.testSource)];
+    var lines = ["速度测试 · " + result.node, result.direction === "both" ? "下载源：" + sourceLabel(result.testSource) + " · 上传源：" + sourceLabel(result.uploadSource) : "测速源：" + sourceLabel(result.testSource)];
     result.runs.forEach(function (item) {
-      lines.push(modeLabel(item.concurrency) + "：" + (item.state === "ok" ? formatRate(item.bytesPerSecond) : "无有效速度结果（" + item.state + "）"));
+      lines.push(modeLabel(item.concurrency) + (item.direction === "upload" ? "上传" : "下载") + " · " + sourceLabel(item.testSource) + "：" + (item.state === "ok" ? formatRate(item.bytesPerSecond) : "无有效速度结果（" + item.state + "）"));
       lines.push("测量数据 " + (item.completedBytes / MB).toFixed(2) + " MB · 测量耗时 " + (item.elapsedMs / 1000).toFixed(2) + " 秒");
       if (item.warmup) lines.push("预热 " + (item.warmup.completedBytes / MB).toFixed(2) + " MB · " + (item.warmup.elapsedMs / 1000).toFixed(2) + " 秒（不计平均速度）");
       lines.push(stopReasonLabel(item.stopReason));
@@ -308,7 +372,7 @@
   }
 
   function stopReasonLabel(reason) {
-    return { duration: "已达到测量时长", budget: "已达到数据预算", error: "下载出现异常", "callback-timeout": "下载回调超时", "warmup-error": "预热未完成" }[reason] || "测试结束";
+    return { duration: "已达到测量时长", budget: "已达到数据预算", error: "传输出现异常", "callback-timeout": "传输回调超时", "warmup-error": "预热未完成" }[reason] || "测试结束";
   }
 
   return { parseArgument: parseArgument, normalizeOptions: normalizeOptions, resolveTarget: resolveTarget, formatRate: formatRate, run: run, summary: summary, stopReasonLabel: stopReasonLabel };

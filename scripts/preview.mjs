@@ -1,24 +1,16 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import view from '../src/presentation.js';
-
 const directory = path.resolve(process.argv[2] || 'work/previews');
 await mkdir(directory, { recursive: true });
-const single = {
-  version: '0.1.2', node: '示例节点 · US', testSource: 'cf', state: 'ok', comparisonRatio: null,
-  runs: [{ state: 'ok', concurrency: 1, completedBytes: 18000000, elapsedMs: 10376, targetDurationMs: 10000,
-    bytesPerSecond: 18000000 / 10.376, stopReason: 'duration', errors: [], warnings: [],
-    warmup: { completedBytes: 4000000, elapsedMs: 2100 }, totalCompletedBytes: 22000000, totalElapsedMs: 12476 }]
-};
-const compare = JSON.parse(JSON.stringify(single));
-compare.runs.push({ ...compare.runs[0], concurrency: 4, bytesPerSecond: 5500000, completedBytes: 24000000, elapsedMs: 24000000 / 5500, totalElapsedMs: 24000000 / 5500 + 2100, totalCompletedBytes: 28000000, stopReason: 'budget' });
-compare.comparisonRatio = compare.runs[1].bytesPerSecond / compare.runs[0].bytesPerSecond;
-for (const [name, html] of [
-  ['single.html', view.render(single)],
-  ['compare.html', view.render(compare)],
-  ['error.html', view.error('HEAD 200 正常，但测速源未声明 Accept-Ranges: bytes。\n未继续下载正文。')]
-]) {
-  const preview = html.replace('<main>', '<main><p style="font-size:11px;color:var(--muted);margin:0 0 16px">界面预览 · 示例数据</p>');
-  await writeFile(path.join(directory, name), preview);
+const base = { state: 'ok', concurrency: 1, completedBytes: 36000000, elapsedMs: 10280, targetDurationMs: 10000,
+  bytesPerSecond: 36000000 / 10.28, stopReason: 'duration', errors: [], warnings: [],
+  warmup: { completedBytes: 6000000, elapsedMs: 2180 }, totalCompletedBytes: 42000000, totalElapsedMs: 12460 };
+const single = { version: '0.2.0', direction: 'both', mode: 'single', node: '示例节点 · US', testSource: 'cf', state: 'ok', budgetBytes: 128000000,
+  runs: [{ ...base, direction: 'download', testSource: 'cf' }, { ...base, direction: 'upload', testSource: 'cf', bytesPerSecond: 2240000, completedBytes: 23027200, totalCompletedBytes: 29027200 }] };
+const compare = { ...single, mode: 'compare', budgetBytes: 256000000, runs: single.runs.flatMap(run => [run, { ...run, concurrency: 4, bytesPerSecond: run.bytesPerSecond * 2.1, elapsedMs: run.elapsedMs / 2.1, totalElapsedMs: run.elapsedMs / 2.1 + run.warmup.elapsedMs }]) };
+const partial = { ...single, state: 'partial', runs: [single.runs[0], { ...single.runs[1], state: 'failed', errors: ['上传 HTTP 403'], completedBytes: 0, totalCompletedBytes: 0, elapsedMs: 200, totalElapsedMs: 200, warmup: null, bytesPerSecond: null }] };
+for (const [name, html] of [['single.html', view.render(single)], ['compare.html', view.render(compare)], ['partial.html', view.render(partial)], ['error.html', view.error('无法连接测速源，请检查节点后重试。')]]) {
+  await writeFile(path.join(directory, name), html);
 }
-console.log('已生成示例结果页：' + directory);
+console.log('已生成示例数据的结果预览：' + directory);

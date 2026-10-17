@@ -1,13 +1,13 @@
 {
   "name": "loon-speedtest",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "private": true,
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/fanbuz/loon-speedtest-plugin.git"
   },
-  "description": "Loon 节点单路与并发下载测速实验插件",
+  "description": "Loon 节点上传与下载速度测试",
   "scripts": {
     "build": "node scripts/build.mjs",
     "build:local": "node scripts/build.mjs --local",

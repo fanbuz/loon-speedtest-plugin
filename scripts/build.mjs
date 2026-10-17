@@ -26,8 +26,13 @@ if (baseUrl) {
   }
   scriptPath = new URL('loon-speedtest.js', base).href;
 }
-const sources = await Promise.all(['src/core.js', 'src/loon.js'].map(file => readFile(path.join(root, file), 'utf8')));
+const sources = await Promise.all(['src/core.js', 'src/presentation.js', 'src/loon.js'].map(file => readFile(path.join(root, file), 'utf8')));
 const { version } = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
+if (baseUrl) {
+  const remoteScript = new URL(scriptPath);
+  remoteScript.searchParams.set('v', version);
+  scriptPath = remoteScript.href;
+}
 const icon = await readFile(path.join(root, 'assets/icon.png'));
 const destination = outputDir ? path.resolve(outputDir) : path.join(root, 'dist');
 await mkdir(destination, { recursive: true });
@@ -46,16 +51,17 @@ const plugin = [
   'mode = select,"single","concurrent","compare",type=string,tag=测速模式,desc=single 单路 / concurrent 并发 / compare 顺序对比',
   'node = input,"",type=string,tag=节点或策略组,desc=填写精确名称；留空时从运行入口获取；直连填 DIRECT',
   'test_source = select,"Cloudflare","Apple CDN","自定义",type=string,tag=测速源,desc=默认 Cloudflare；Apple 和自定义源先检查分段支持',
-  'test_url = input,"",type=string,tag=自定义 test_url,desc=仅选择自定义时有效；地址须支持 HEAD 和 GET Range',
+  'test_url = input,"",type=string,tag=自定义 test_url,desc=仅选择自定义时有效；HEAD 需声明范围能力且 GET 支持 Range',
   'concurrency = select,4,2,8,type=number,tag=并发请求数,desc=仅 concurrent 和 compare 模式使用',
-  'duration = select,10,5,15,30,type=number,tag=每轮发请求时长（秒）,desc=到期停止发新请求并等待在途请求完成',
+  'duration = select,10,5,15,30,type=number,tag=正式测量时长（秒）,desc=不含预热；到期停止发新请求并等待在途请求完成',
+  'warmup = select,2,0,1,3,5,type=number,tag=预热窗口（秒）,desc=到时停发并收尾；最多占本轮预算四分之一；不计平均速度',
   'chunkKB = select,1000,250,4000,type=number,tag=每块大小（十进制 KB）',
   'maxMB = select,64,16,128,256,type=number,tag=总请求数据预算（十进制 MB）,desc=compare 两轮均分；不含协议开销及失败请求的未知数据',
   'requestTimeout = select,5,3,10,15,type=number,tag=请求超时（秒）',
   'notify = switch,true,type=boolean,tag=完成后通知',
   '',
   '[Script]',
-  'generic then script(' + JSON.stringify(scriptPath) + ', {${mode}, ${node}, ${test_source}, ${test_url}, ${concurrency}, ${duration}, ${chunkKB}, ${maxMB}, ${requestTimeout}, ${notify}}) with tag="下载测速", img_url=' + JSON.stringify(baseUrl ? new URL('icon.png', baseUrl).href : 'speedometer.system') + ', timeout=120',
+  'generic then script(' + JSON.stringify(scriptPath) + ', {${mode}, ${node}, ${test_source}, ${test_url}, ${concurrency}, ${duration}, ${warmup}, ${chunkKB}, ${maxMB}, ${requestTimeout}, ${notify}}) with tag="下载测速", img_url=' + JSON.stringify(baseUrl ? new URL('icon.png', baseUrl).href : 'speedometer.system') + ', timeout=180',
   ''
 ].join('\n');
 await writeFile(path.join(destination, 'LoonSpeedtest.plugin'), plugin);

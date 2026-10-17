@@ -2,7 +2,7 @@
 
 <img src="assets/icon.png" width="96" height="96" alt="Loon Speedtest 图标">
 
-在 Loon 中手动测试同一节点的单路或多路并发下载表现。v0.1.1 支持结果弹窗、测速源选择和 GitHub Raw 分发；Loon 真机回归验收待完成。
+在 Loon 中手动测试同一节点的单路或多路并发下载表现。v0.1.2 支持独立预热、HTML 结果页、测速源选择和 GitHub Raw 分发；Loon 真机回归验收待完成。
 
 | 模式 | 行为 |
 | --- | --- |
@@ -30,15 +30,15 @@ npm run build            # 生成当前仓库 GitHub Raw 分发包
 
 要求 Loon 3.5.1 (983)+。在 Loon 的插件页面添加这个地址：
 
-[安装 / 更新 LoonSpeedtest.plugin](https://raw.githubusercontent.com/fanbuz/loon-speedtest-plugin/main/dist/LoonSpeedtest.plugin)
+[安装 / 更新 LoonSpeedtest.plugin](https://raw.githubusercontent.com/fanbuz/loon-speedtest-plugin/main/dist/LoonSpeedtest.plugin?v=0.1.2)
 
 1. 插件参数 **node** 填已有节点或策略组的精确名称；直连必须明确填 `DIRECT`。
-2. 测速源默认 Cloudflare，也可选 Apple CDN。选“自定义”后，在 `test_url` 填直接下载文件的 HTTP(S) 地址；该源须正确支持 HEAD 和 GET Range。
-3. 模式先用 `single`，再选 `concurrent` 或 `compare`；并发默认 4。
+2. 测速源默认 Cloudflare，也可选 Apple CDN。选“自定义”后，在 `test_url` 填直接下载文件的 HTTP(S) 地址；该源的 HEAD 须声明字节范围能力，GET 须正确支持 Range。
+3. 模式先用 `single`，再选 `concurrent` 或 `compare`；并发默认 4，预热窗口默认 2 秒。预热结束并收尾后才开始正式计时。
 4. 从 Loon 的 Generic 手动脚本入口执行「下载测速」，安装后不会自动运行。
-5. 完成时结果弹窗显示摘要；脚本日志含过程与错误，通知可关闭。最后结构化结果保存在 `$persistentStore` 的 `loon-speedtest:lastResult`。
+5. 完成时 HTML 结果页突出 Mbps，并列出 MB/s、正式数据、测量耗时、预热与收尾；自动适配浅/深色。脚本日志含过程与错误，通知可关闭。最后结构化结果保存在 `$persistentStore` 的 `loon-speedtest:lastResult`。
 
-更新代码后，在 Loon 更新插件及脚本缓存。日志首行包含 `v0.1.1 | 脚本已加载`，可确认正在运行新脚本。
+更新代码后，在 Loon 更新插件及脚本缓存。日志首行包含 `v0.1.2 | 脚本已加载`，可确认正在运行新脚本。
 
 ## 测速源
 
@@ -48,9 +48,9 @@ npm run build            # 生成当前仓库 GitHub Raw 分发包
 | Apple CDN | `https://mensura.cdn-apple.com/api/v1/gm/large`，HEAD/GET Range 分块 | 忽略 |
 | 自定义 | 使用填写的 HTTP(S) 直链，HEAD/GET Range 分块 | 必填且只在此时生效 |
 
-Apple 和自定义源先发 `HEAD` 携带 `Range: bytes=0-65535`，确认 206 与正确 Content-Range 后，才发正文 GET。每个 GET 再校验 206、Content-Range 和实际二进制字节数。不支持分段的源会给出明确错误；不会自动退回整文件下载。
+Apple 和自定义源先发**不带 Range 的 HEAD**，正常的 200 可通过 Accept-Ranges: bytes 声明检查；不会要求 HEAD 必须 206。真正分块 GET 仍须返回 206，并校验 Content-Range 和真实二进制字节数。未声明能力时不会尝试正文，GET 异常也不退回整文件下载。
 
-自定义地址原样保留查询参数，不附加 Cloudflare 的 `bytes` 参数。页面地址、需要登录的下载页和不支持 HEAD Range 的端点不适用。`test_url` 控件始终可见，但预设源不会读取它。
+自定义地址原样保留查询参数，不附加 Cloudflare 的 `bytes` 参数。页面地址、需要登录的下载页和HEAD 未声明 Accept-Ranges: bytes 的端点不适用。`test_url` 控件始终可见，但预设源不会读取它。
 
 ## 其他分发与本地开发
 
@@ -69,7 +69,7 @@ npm run build -- --base-url https://assets.example.com/loon/dist/
 本地脚本方式须显式执行 `npm run build:local`，把构建后的 JS 放到 Loon 可访问的本地脚本位置，再在主配置 `[Script]` 添加：
 
 ```ini
-generic then script("loon-speedtest.js", "mode=compare&node=你的节点名称&test_source=cf&concurrency=4&duration=10&maxMB=64") with tag="下载测速", timeout=120
+generic then script("loon-speedtest.js", "mode=compare&node=你的节点名称&test_source=cf&concurrency=4&duration=10&maxMB=64") with tag="下载测速", timeout=180
 ```
 
 包含 `&`、`+`、`=` 的查询字符串参数值须用 `encodeURIComponent` 编码；插件参数输入无需编码。未传 node 时仅使用入口的 `params.node` / `params.policyGroup`；无法识别就报错，不猜 nodeInfo 内部字段。
@@ -83,22 +83,23 @@ generic then script("loon-speedtest.js", "mode=compare&node=你的节点名称&t
 | `test_source` | Cloudflare | 下拉：Cloudflare / Apple CDN / 自定义；脚本参数也接受 cf / apple / custom |
 | `test_url` | 空 | 仅自定义生效；HTTP(S) 直链且支持 HEAD/GET Range |
 | `concurrency` | 4 | 2–8 的整数；单路模式忽略 |
-| `duration` | 10 | 每轮发请求窗口，3–30 秒；不是硬性总时长 |
+| `duration` | 10 | 正式测量发请求窗口，3–30 秒；不含预热，收尾会增加耗时 |
+| `warmup` | 2 | 预热发请求窗口，0–5 秒；0 关闭；最多使用每轮预算的 1/4 |
 | `chunkKB` | 1000 | 每次请求数据量，64–4000 KB，十进制 |
 | `maxMB` | 64 | 所有轮次合计请求数据预算，4–256 MB，十进制 |
 | `requestTimeout` | 5 | 每个请求超时，1–15 秒 |
 | `notify` | true | 是否发送结果通知 |
 
-到达时长或预算就停止发新请求，等待在途请求结束。两者以先到者为准；正常总时长可能超过 duration。回调缺失时在 `duration + requestTimeout + 1 秒` 兜底，将结果标为不完整并结束本次脚本。
+预热和正式测量分别以时长或预算先到为准停止发新请求，再等待在途结束。预热最多使用本轮请求数据预算的 1/4，其余留给正式测量；预算先到可能使预热短于配置窗口，冷启动请求收尾可能使它更长。比较时每一轮都独立预热，上一阶段排空后才进入下一阶段。预热失败则不开始正式测量。各阶段分别在其窗口 + requestTimeout + 1 秒兜底。
 
 ## 如何读结果
 
-- 平均速度 = **成功的真实二进制响应总字节 / 本轮首个请求调度至全部请求回调的墙钟时间**，包含建连、TLS、等待和收尾，是分块下载的应用层吞吐。并发使用统一的墙钟时间，不把各请求耗时相加。
-- `1 MB = 1,000,000 B`；`1 MB/s = 8 Mbps`。失败、非 200、非二进制、长度不符时不提供有效速度；不会用 Content-Length 推算已下载量。
+- 平均速度 = **正式阶段成功的真实二进制响应总字节 / 正式阶段首个请求调度至全部请求回调的墙钟时间**。预热数据与时间不计入该速度，但仍计入本轮总下载量和请求预算；结果属于分块下载的应用层吞吐，包含正式请求的连接、等待和收尾。并发使用统一的墙钟时间，不把各请求耗时相加。
+- `1 MB = 1,000,000 B`；`1 MB/s = 8 Mbps`。结果页的 Mbps 与 MB/s 从同一原始值分别取两位和三位小数，避免先对 MB/s 取整再换算。失败、非 200、非二进制、长度不符时不提供有效速度；不会用 Content-Length 推算已下载量。
 - 日志里的累计数据只在下载完成回调时更新，**不是每秒真实流量**。本版不输出瞬时峰值或逐秒中位数。
 - 并发指 N 个在途 HTTP 请求。设置 HTTP/1.1，但 Loon 和代理协议可能复用底层连接；没有独立 TCP 连接数的观测证据。
-- 64 MB 是请求的数据预算，包含失败请求的预留份额；不等于运营商或机场计费流量上限，不含协议开销、失败请求未知部分。遇到错误不重试。对比时每轮最多请求 32 MB。
-- `compare` 按先单路后并发顺序运行，网络状态和缓存可能变化；比例只代表本次采样。小分块、高延迟和短样本会压低吞吐或放大波动。
+- 64 MB 是请求的数据预算，包含失败请求的预留份额；不等于运营商或机场计费流量上限，不含协议开销、失败请求未知部分。遇到错误不重试。对比时每轮最多请求 32 MB（含该轮预热）。
+- `compare` 按先单路后并发顺序运行，网络状态和缓存可能变化；比例只代表本次采样。预热不保证底层 TCP 已完全进入稳定态，分块请求仍可能受到连接复用策略影响。小分块、高延迟和短样本会压低吞吐或放大波动。
 - 向 Cloudflare 发请求不等于复现 Cloudflare 网页的完整测速算法。本版不依赖其浏览器 SDK，不做上传、UDP、丢包或截图原生界面复刻。
 
 ## 项目资料
@@ -111,9 +112,9 @@ generic then script("loon-speedtest.js", "mode=compare&node=你的节点名称&t
 
 ## 故障排查
 
-- **empty content**：v0.1.1 无论成功或失败都用 `$done({title, content})` 返回内容。先更新插件和 JS；若没有“脚本已加载”日志，检查插件中的脚本 URL 能否直接返回 JS 正文。
+- **empty content**：v0.1.2 成功或失败都用官方支持的 `$done({title, htmlMessage})` 返回 HTML；若渲染异常则回退 title/content 文本。先更新插件和 JS；若没有“脚本已加载”日志，检查插件中的脚本 URL 能否直接返回 JS 正文。
 - **仍引用局域网地址**：重新执行默认 `npm run build` 并更新分发文件；移动文件不会重写引用地址。
-- **自定义源 Range 检查失败**：检查下载直链、HEAD 权限及 206 / Content-Range，换用支持分段的源。
+- **自定义源 Range 检查失败**：HEAD 200 本身正常；检查 Accept-Ranges: bytes。真正 GET 要检查 206 / Content-Range，日志会区分 HEAD 与 GET。
 - **Raw 无法访问**：先检查设备网络能否读取上方插件地址，地址必须返回文本配置而不是 GitHub HTML 页面。
 
 ## 协议与图标

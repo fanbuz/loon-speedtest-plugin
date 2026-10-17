@@ -2,10 +2,10 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const core = require('../src/core.js');
 const harness = require('./harness.cjs');
-const options = overrides => core.normalizeOptions({ node: '测试节点', duration: 3, maxMB: 4, ...overrides });
+const options = overrides => core.normalizeOptions({ node: '测试节点', duration: 3, maxMB: 4, warmup: 0, ...overrides });
 const goodRange = spec => ({
-  status: 206, binary: true, bytes: spec.method === 'HEAD' ? 0 : spec.bytes,
-  headers: { 'Content-Range': 'bytes 0-' + (spec.bytes - 1) + '/4294967296', 'Content-Length': String(spec.bytes) }
+  status: spec.method === 'HEAD' ? 200 : 206, binary: true, bytes: spec.method === 'HEAD' ? 0 : spec.bytes,
+  headers: spec.method === 'HEAD' ? { 'Accept-Ranges': 'bytes', 'Content-Length': '4294967296' } : { 'Content-Range': 'bytes 0-' + (spec.bytes - 1) + '/4294967296', 'Content-Length': String(spec.bytes) }
 });
 
 test('默认 CF；预设源完全忽略 test_url，只有自定义才校验并使用它', () => {
@@ -19,15 +19,17 @@ test('默认 CF；预设源完全忽略 test_url，只有自定义才校验并�
   ]) assert.throws(() => options(input));
 });
 
-test('Apple HEAD 先校验分段支持，GET 使用有界 Range，数据预算只统计 GET', async () => {
+test('Apple HEAD 200 正常通过，HEAD 不带 Range；GET 仍须 206，预算只统计 GET', async () => {
   const h = harness({ delay: 100 });
   const result = await h.settle(core.run(options({ test_source: 'Apple CDN', mode: 'concurrent' }), h.runtime));
   assert.equal(h.calls[0].method, 'HEAD');
-  assert.equal(h.calls[0].bytes, 65536);
+  assert.equal(h.calls[0].bytes, 0);
+  assert.equal(h.calls[0].headers.Range, undefined);
   assert.ok(h.calls.slice(1).every(call => call.start >= 100 && call.headers.Range === 'bytes=0-999999' && call.node === '测试节点'));
   assert.equal(result.runs[0].completedBytes, 4000000);
   assert.equal(result.runs[0].scheduledBytes, 4000000);
   assert.equal(result.source, 'https://mensura.cdn-apple.com/api/v1/gm/large');
+  assert.equal(result.sourceInfo.status, 200);
 });
 
 test('自定义地址和查询参数原样保留；对比只进行一次 HEAD 检查', async () => {
@@ -40,11 +42,17 @@ test('自定义地址和查询参数原样保留；对比只进行一次 HEAD �
   assert.match(core.summary(result), /测速源：自定义/);
 });
 
-test('不支持 HEAD Range 的源在正文下载前终止', async () => {
+test('HEAD 未声明范围能力时在正文下载前终止，不把 200 本身当作错误', async () => {
   const h = harness({ reply: () => ({ status: 200, headers: { 'Content-Length': '4294967296' } }) });
-  await assert.rejects(h.settle(core.run(options({ test_source: 'apple' }), h.runtime)), /必须支持 HTTP Range/);
+  await assert.rejects(h.settle(core.run(options({ test_source: 'apple' }), h.runtime)), /未声明 Accept-Ranges/);
   assert.equal(h.calls.length, 1);
   assert.equal(h.calls[0].method, 'HEAD');
+});
+
+test('兼容端点返回合法 HEAD 206 元数据，但不依赖该行为', async () => {
+  const h = harness({ reply: spec => spec.method === 'HEAD' ? { status: 206, headers: { 'Content-Range': 'bytes 0-65535/4294967296', 'Content-Length': '65536' }, bytes: 0 } : goodRange(spec) });
+  const result = await h.settle(core.run(options({ test_source: 'apple' }), h.runtime));
+  assert.equal(result.state, 'ok');
 });
 
 test('分段预检缺失回调时超时退出，不发 GET', async () => {

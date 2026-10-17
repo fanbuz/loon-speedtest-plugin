@@ -2,7 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const core = require('../src/core.js');
 const harness = require('./harness.cjs');
-const options = overrides => core.normalizeOptions({ node: '测试节点', duration: 3, maxMB: 4, chunkKB: 1000, ...overrides });
+const options = overrides => core.normalizeOptions({ node: '测试节点', duration: 3, maxMB: 4, chunkKB: 1000, warmup: 0, ...overrides });
 
 test('参数支持对象、JSON 和编码后的查询字符串', () => {
   assert.equal(core.normalizeOptions('node=%E6%B5%8B%E8%AF%95&mode=concurrent').node, '测试');

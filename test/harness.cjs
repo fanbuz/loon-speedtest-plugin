@@ -19,7 +19,10 @@ function harness({ delay = 1000, reply, hang = false } = {}) {
         active--;
         try {
           const range = spec.headers && spec.headers.Range;
-          const value = reply ? reply(spec) : {
+          const value = reply ? reply(spec) : spec.method === 'HEAD' ? {
+            status: 200, binary: true, bytes: 0,
+            headers: { 'Accept-Ranges': 'bytes', 'Content-Length': '4294967296' }
+          } : {
             status: range ? 206 : 200, binary: true, bytes: spec.method === 'HEAD' ? 0 : spec.bytes,
             headers: range ? { 'Content-Range': 'bytes 0-' + (spec.bytes - 1) + '/4294967296', 'Content-Length': String(spec.bytes) } : {}
           };

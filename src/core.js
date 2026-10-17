@@ -62,6 +62,7 @@
       chunkBytes: numberOption(raw.chunkKB, 1000, 64, 4000, "chunkKB", true) * 1000,
       maxBytes: numberOption(raw.maxMB, 64, 4, 256, "maxMB", true) * MB,
       requestTimeoutMs: numberOption(raw.requestTimeout, 5, 1, 15, "requestTimeout", true) * 1000,
+      warmupMs: numberOption(raw.warmup, 2, 0, 5, "warmup", true) * 1000,
       notify: raw.notify !== false && raw.notify !== "false"
     };
   }
@@ -93,7 +94,7 @@
   }
 
   function validateRange(response, bytes) {
-    if (!response || response.status !== 206) throw new Error("测速源必须支持 HTTP Range 并返回 206；当前 HTTP " + (response ? response.status : "无响应"));
+    if (!response || response.status !== 206) throw new Error("GET 分块下载需要 HTTP 206；实际 HTTP " + (response ? response.status : "无响应") + "，本次不作为有效测速数据");
     var range = header(response.headers, "content-range");
     var match = range && /^bytes\s+0-(\d+)\/(\d+)$/i.exec(range);
     if (!match || Number(match[1]) !== bytes - 1 || Number(match[2]) < bytes) throw new Error("测速源 Content-Range 与请求分块不符");
@@ -102,24 +103,39 @@
   }
 
   function preflight(options, runtime) {
-    if (options.testSource === "cf") return Promise.resolve();
-    if (runtime.log) runtime.log("检查 " + sourceLabel(options.testSource) + " 的 HEAD Range 支持（不下载文件正文）");
-    var bytes = 65536;
+    if (options.testSource === "cf") return Promise.resolve(null);
+    if (runtime.log) runtime.log("检查 " + sourceLabel(options.testSource) + " 的范围能力声明（HEAD 不带 Range，不下载正文）");
     return new Promise(function (resolve, reject) {
       var settled = false;
-      function settle(error) {
+      function settle(error, info) {
         if (settled) return;
         settled = true;
-        if (error) reject(error); else resolve();
+        if (error) reject(error); else resolve(info);
       }
       runtime.setTimeout(function () { settle(new Error("测速源分段检查超时；没有发起正文下载")); }, options.requestTimeoutMs + 1000);
       Promise.resolve().then(function () {
-        return runtime.request({ method: "HEAD", url: options.testUrl, node: options.node, timeout: options.requestTimeoutMs, bytes: bytes, headers: { Range: "bytes=0-" + (bytes - 1) } });
+        return runtime.request({ method: "HEAD", url: options.testUrl, node: options.node, timeout: options.requestTimeoutMs, bytes: 0, headers: {} });
       }).then(function (response) {
         if (settled) return;
-        validateRange(response, bytes);
-        settle();
-      }).catch(function (error) { settle(error); });
+        var status = response && response.status;
+        var ranges = header(response && response.headers, "accept-ranges");
+        var length = header(response && response.headers, "content-length");
+        if (runtime.log) runtime.log("HEAD 检查：HTTP " + status + " | Accept-Ranges=" + ranges + " | Content-Length=" + length);
+        if (status === 206) {
+          // Some endpoints return a partial HEAD response. Accept valid metadata,
+          // but never require 206: Range semantics are defined for GET (RFC 9110).
+          var range = header(response.headers, "content-range");
+          var match = range && /^bytes\s+0-(\d+)\/(\d+)$/i.exec(range);
+          if (!match) throw new Error("HEAD 206 的 Content-Range 无效");
+          validateRange(response, Number(match[1]) + 1);
+        } else if (status !== 200) {
+          throw new Error("HEAD 返回 HTTP " + status);
+        } else if (!ranges || !/(^|,)\s*bytes\s*(,|$)/i.test(ranges)) {
+          throw new Error("HEAD 200 是正常响应，但未声明 Accept-Ranges: bytes；未继续下载正文");
+        }
+        if (length != null && (!/^\d+$/.test(length) || Number(length) <= 0)) throw new Error("HEAD 返回的文件大小无效");
+        settle(null, { status: status, acceptRanges: ranges, contentLength: length });
+      }).catch(function (error) { settle(new Error("HEAD 检查失败：" + String(error.message || error))); });
     });
   }
 
@@ -138,6 +154,7 @@
       var samples = [];
       var errors = [];
       var token = String(startedAt) + "-" + String(runtime.random ? runtime.random() : Math.random()).slice(2);
+      var phaseName = config.phase === "warmup" ? "预热" : "正式测速";
 
       function log(text) { if (runtime.log) runtime.log(text); }
 
@@ -148,9 +165,9 @@
         var state = incomplete ? "incomplete" : errors.length ? "failed" : successful ? "ok" : "failed";
         if (!successful && !errors.length) errors.push("没有获得可用下载样本");
         var warnings = [];
-        if (state === "ok" && elapsedMs < 2000) warnings.push("样本不足 2 秒；可提高数据预算后复测");
+        if (config.phase !== "warmup" && state === "ok" && elapsedMs < 2000) warnings.push("正式样本不足 2 秒；可提高数据预算后复测");
         var result = {
-          state: state, node: config.node, source: config.testUrl, testSource: config.testSource, concurrency: config.concurrency,
+          state: state, phase: config.phase, node: config.node, source: config.testUrl, testSource: config.testSource, concurrency: config.concurrency,
           startedAt: startedAt, elapsedMs: elapsedMs, targetDurationMs: config.durationMs,
           budgetBytes: config.maxBytes, scheduledBytes: scheduledBytes,
           completedBytes: completedBytes, requests: requests, successfulRequests: successful,
@@ -158,8 +175,8 @@
           stopReason: incomplete ? "callback-timeout" : errors.length ? "error" : scheduledBytes >= config.maxBytes ? "budget" : "duration",
           errors: errors, warnings: warnings, samples: samples
         };
-        log(modeLabel(config.concurrency) + "结束 | " + state + " | 有效数据 " + (completedBytes / MB).toFixed(2) + " MB | 耗时 " + (elapsedMs / 1000).toFixed(2) + "s");
-        if (result.bytesPerSecond != null) log("平均应用层下载速度：" + formatRate(result.bytesPerSecond));
+        log(modeLabel(config.concurrency) + phaseName + "结束 | " + state + " | 有效数据 " + (completedBytes / MB).toFixed(2) + " MB | 耗时 " + (elapsedMs / 1000).toFixed(2) + "s");
+        if (config.phase !== "warmup" && result.bytesPerSecond != null) log("正式平均应用层下载速度：" + formatRate(result.bytesPerSecond));
         resolve(result);
       }
 
@@ -180,6 +197,7 @@
         var requestStart = runtime.now();
         var spec = {
           method: "GET",
+          phase: config.phase,
           url: config.testSource === "cf" ? config.testUrl + "?bytes=" + bytes + "&loon_test=" + token + "-" + requestId : config.testUrl,
           headers: config.testSource === "cf" ? {} : { Range: "bytes=0-" + (bytes - 1) },
           node: config.node, timeout: config.requestTimeoutMs,
@@ -197,7 +215,7 @@
           samples.push({ requestId: requestId, worker: worker, bytes: response.bytes, startMs: requestStart - startedAt, endMs: runtime.now() - startedAt });
           if (runtime.now() - lastProgress >= 1000) {
             lastProgress = runtime.now();
-            log(modeLabel(config.concurrency) + " | " + ((runtime.now() - startedAt) / 1000).toFixed(1) + "s | 已完成 " + (completedBytes / MB).toFixed(2) + " MB（完成回调统计，非逐秒速率）");
+            log(modeLabel(config.concurrency) + phaseName + " | " + ((runtime.now() - startedAt) / 1000).toFixed(1) + "s | 已完成 " + (completedBytes / MB).toFixed(2) + " MB（完成回调统计，非逐秒速率）");
           }
         }).catch(function (error) {
           if (finished) return;
@@ -211,12 +229,12 @@
         });
       }
 
-      log("开始" + modeLabel(config.concurrency) + "下载测速 | 目标：" + config.node);
+      log("开始" + modeLabel(config.concurrency) + phaseName + " | 目标：" + config.node);
       log("源：" + config.testUrl + " | 发请求窗口 " + (config.durationMs / 1000) + "s | 请求数据预算 " + (config.maxBytes / MB) + " MB");
       // No clearTimeout/setInterval dependency; Loon releases timers at $done().
       runtime.setTimeout(function () {
         if (!finished) {
-          if (active) log("已达到发请求时长，等待 " + active + " 个在途请求结束");
+          if (active) log(phaseName + "已达到发请求时长，等待 " + active + " 个在途请求结束");
           maybeFinish();
         }
       }, config.durationMs);
@@ -233,19 +251,42 @@
 
   async function run(options, runtime) {
     if (!options.node) throw new Error("测速必须指定目标 node");
-    await preflight(options, runtime);
+    var sourceInfo = await preflight(options, runtime);
     var levels = options.mode === "compare" ? [1, options.concurrency] : [options.mode === "single" ? 1 : options.concurrency];
     var runs = [];
     for (var i = 0; i < levels.length; i += 1) {
-      var result = await runPhase(Object.assign({}, options, {
-        concurrency: levels[i], maxBytes: Math.floor(options.maxBytes / levels.length)
-      }), runtime);
+      var phaseBudget = Math.floor(options.maxBytes / levels.length);
+      var warmup = null;
+      if (options.warmupMs > 0) {
+        var warmupBudget = Math.floor(phaseBudget / 4);
+        warmup = await runPhase(Object.assign({}, options, {
+          phase: "warmup", concurrency: levels[i], durationMs: options.warmupMs, maxBytes: warmupBudget,
+          chunkBytes: Math.min(options.chunkBytes, Math.max(1, Math.floor(warmupBudget / levels[i])))
+        }), runtime);
+      }
+      var result;
+      if (warmup && warmup.state !== "ok") {
+        result = Object.assign({}, warmup, {
+          phase: "measurement", elapsedMs: 0, completedBytes: 0, scheduledBytes: 0,
+          requests: 0, successfulRequests: 0, unresolvedRequests: 0, samples: [], bytesPerSecond: null,
+          targetDurationMs: options.durationMs, stopReason: "warmup-error", errors: ["预热未完成，未开始正式测量"].concat(warmup.errors)
+        });
+      } else {
+        result = await runPhase(Object.assign({}, options, {
+          phase: "measurement", concurrency: levels[i], maxBytes: phaseBudget - (warmup ? warmup.scheduledBytes : 0)
+        }), runtime);
+      }
+      result.warmup = warmup;
+      result.totalElapsedMs = result.elapsedMs + (warmup ? warmup.elapsedMs : 0);
+      result.totalCompletedBytes = result.completedBytes + (warmup ? warmup.completedBytes : 0);
+      result.totalScheduledBytes = result.scheduledBytes + (warmup ? warmup.scheduledBytes : 0);
+      result.budgetBytes = phaseBudget;
       runs.push(result);
       // A failed/timed-out phase cannot safely or fairly precede another phase.
       if (result.state !== "ok") break;
     }
     return {
-      version: "0.1.1", mode: options.mode, node: options.node, source: options.testUrl, testSource: options.testSource,
+      version: "0.1.2", mode: options.mode, node: options.node, source: options.testUrl, testSource: options.testSource, sourceInfo: sourceInfo,
       state: runs.length === levels.length && runs.every(function (result) { return result.state === "ok"; }) ? "ok" : "failed",
       budgetBytes: options.maxBytes, runs: runs,
       comparisonRatio: runs.length === 2 && runs.every(function (result) { return result.state === "ok"; }) && runs[0].bytesPerSecond > 0 ? runs[1].bytesPerSecond / runs[0].bytesPerSecond : null
@@ -256,7 +297,9 @@
     var lines = ["目标：" + result.node, "测速源：" + sourceLabel(result.testSource)];
     result.runs.forEach(function (item) {
       lines.push(modeLabel(item.concurrency) + "：" + (item.state === "ok" ? formatRate(item.bytesPerSecond) : "无有效速度结果（" + item.state + "）"));
-      lines.push("有效数据 " + (item.completedBytes / MB).toFixed(2) + " MB / " + (item.elapsedMs / 1000).toFixed(2) + "s；停止原因 " + item.stopReason);
+      lines.push("测量数据 " + (item.completedBytes / MB).toFixed(2) + " MB · 测量耗时 " + (item.elapsedMs / 1000).toFixed(2) + " 秒");
+      if (item.warmup) lines.push("预热 " + (item.warmup.completedBytes / MB).toFixed(2) + " MB · " + (item.warmup.elapsedMs / 1000).toFixed(2) + " 秒（不计平均速度）");
+      lines.push(stopReasonLabel(item.stopReason));
       if (item.errors.length) lines.push(item.errors.join("\n"));
       if (item.warnings.length) lines.push(item.warnings.join("\n"));
     });
@@ -264,5 +307,9 @@
     return lines.join("\n");
   }
 
-  return { parseArgument: parseArgument, normalizeOptions: normalizeOptions, resolveTarget: resolveTarget, formatRate: formatRate, run: run, summary: summary };
+  function stopReasonLabel(reason) {
+    return { duration: "已达到测量时长", budget: "已达到数据预算", error: "下载出现异常", "callback-timeout": "下载回调超时", "warmup-error": "预热未完成" }[reason] || "测试结束";
+  }
+
+  return { parseArgument: parseArgument, normalizeOptions: normalizeOptions, resolveTarget: resolveTarget, formatRate: formatRate, run: run, summary: summary, stopReasonLabel: stopReasonLabel };
 });

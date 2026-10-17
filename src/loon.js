@@ -5,10 +5,17 @@
   var options;
 
   function log(text) { console.log(text); }
-  function done(title, content) {
+  function done(title, content, result) {
     if (!finished) {
       finished = true;
-      $done({ title: title, content: content });
+      var payload;
+      try {
+        payload = { title: title, htmlMessage: result ? LoonSpeedtestView.render(result) : LoonSpeedtestView.error(content) };
+      } catch (error) {
+        log("结果页生成失败，使用文本摘要：" + String(error.message || error));
+        payload = { title: title, content: content };
+      }
+      $done(payload);
     }
   }
   function notify(title, text) {
@@ -20,7 +27,7 @@
   }
 
   Promise.resolve().then(function () {
-    log("Loon 下载测速 v0.1.1 | 脚本已加载");
+    log("Loon 下载测速 v0.1.2 | 脚本已加载");
     options = LoonSpeedtest.normalizeOptions(typeof $argument === "undefined" ? null : $argument);
     options.node = LoonSpeedtest.resolveTarget(options.node, typeof $environment === "undefined" ? null : $environment);
     return LoonSpeedtest.run(options, {
@@ -53,7 +60,7 @@
     }
     var title = result.state === "ok" ? "测速完成" : "测速未完成";
     notify(title, text);
-    done(title, text);
+    done(title, text, result);
   }).catch(function (error) {
     var message = String(error.message || error);
     log("测速失败：" + message);

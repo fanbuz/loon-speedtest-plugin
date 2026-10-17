@@ -40,3 +40,7 @@
 ## 发布与真机回归
 
 分发地址见 README。发布后直接读取带版本参数的 Raw 插件和其引用的 JS，并与本地构建产物校验；真机按 TESTING.md 重点确认 Apple HEAD/GET、独立预热、结果 HTML 和正确路由。
+
+## README 一键导入入口
+
+按 [Loon 官方 Scheme 文档](https://nsloon.app/docs/Scheme/) 使用 HTTPS 通用链接 `https://www.nsloon.com/openloon/import?plugin=…`，对含版本参数的完整 Raw 插件地址 URL 编码。README 外层链接包裹仓库 SVG 图片，并保留 Raw 手动安装入口。SVG 的 XML、嵌套地址解码和浏览器浅/深色显示已检查；iOS 唤起和 Loon 确认导入仍属真机验收项。

@@ -52,3 +52,7 @@
 | 连接记录是否证明路由正确 | 待填写 |
 | 单路 / 并发结果 | 待填写 |
 | 错误日志 / 后续动作 | 待填写 |
+
+## README 一键安装
+
+在已安装 Loon 的 iPhone / iPad 用 Safari 打开仓库 README，点按“添加到 Loon”：应唤起 Loon 并出现导入确认，目标为当前 GitHub Raw 的 LoonSpeedtest.plugin。确认后核对插件参数与脚本版本。也检查 GitHub App 内置浏览器；若不支持唤起，用 Safari 或 README 的 Raw 地址完成手动添加。导入入口不应自动执行测速。

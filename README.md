@@ -28,9 +28,13 @@ npm run build            # 生成当前仓库 GitHub Raw 分发包
 
 ## 在 Loon 里安装
 
-要求 Loon 3.5.1 (983)+。在 Loon 的插件页面添加这个地址：
+要求 Loon 3.5.1 (983)+。在已安装 Loon 的 iPhone / iPad 上点按按钮，唤起 Loon 后确认添加插件：
 
-[安装 / 更新 LoonSpeedtest.plugin](https://raw.githubusercontent.com/fanbuz/loon-speedtest-plugin/main/dist/LoonSpeedtest.plugin?v=0.1.2)
+<a href="https://www.nsloon.com/openloon/import?plugin=https%3A%2F%2Fraw.githubusercontent.com%2Ffanbuz%2Floon-speedtest-plugin%2Fmain%2Fdist%2FLoonSpeedtest.plugin%3Fv%3D0.1.2">
+  <img src="assets/add-to-loon.svg" width="276" height="76" alt="一键添加 Loon Speedtest 到 Loon">
+</a>
+
+按钮使用 [Loon 官方通用链接](https://nsloon.app/docs/Scheme/)。如果当前浏览器没有唤起 Loon，可用 Safari 打开本页重试，或在 Loon 的插件页面手动添加 [Raw 插件地址](https://raw.githubusercontent.com/fanbuz/loon-speedtest-plugin/main/dist/LoonSpeedtest.plugin?v=0.1.2)。
 
 1. 插件参数 **node** 填已有节点或策略组的精确名称；直连必须明确填 `DIRECT`。
 2. 测速源默认 Cloudflare，也可选 Apple CDN。选“自定义”后，在 `test_url` 填直接下载文件的 HTTP(S) 地址；该源的 HEAD 须声明字节范围能力，GET 须正确支持 Range。

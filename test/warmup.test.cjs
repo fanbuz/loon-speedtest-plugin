@@ -2,7 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const core = require('../src/core.js');
 const harness = require('./harness.cjs');
-const options = overrides => core.normalizeOptions({ test_source: 'cf', upload_source: 'cf', direction: 'download', node: '测试节点', mode: 'single', duration: 3, maxMB: 16, chunkKB: 1000, ...overrides });
+const options = overrides => core.normalizeOptions({ adaptive: false, httpVersion: 'h1', chunkKB: 1000, test_source: 'cf', upload_source: 'cf', direction: 'download', node: '测试节点', mode: 'single', duration: 3, maxMB: 16, chunkKB: 1000, ...overrides });
 
 test('预热默认 2 秒发请求窗口，可关闭且拒绝超出上限的值', () => {
   assert.equal(options().warmupMs, 2000);

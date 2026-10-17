@@ -1,64 +1,49 @@
 # 节点速度测试设计
 
-## 请求与数据
+## 来源与校验
 
-- 下载 CF：GET `https://speed.cloudflare.com/__down?bytes=N`，HTTP 200、Uint8Array 实际长度必须等于请求字节数。
-- 下载 Apple：`https://mensura.cdn-apple.com/api/v1/gm/large`。Apple 与自定义下载先普通 HEAD，接受 200；Accept-Ranges 为可缺省建议，缺省时继续发 Range GET，显式 none 时停止；真正 GET 必须 206 且 Content-Range / 实际长度匹配。失败不回退完整文件。
-- 上传 Apple（默认）：POST `https://mensura.cdn-apple.com/api/v1/gm/slurp`。地址来自 Apple 官方测速配置，实际响应包含 JSON `Bytes`，必须与请求体大小相等才计入有效上传。只采纳字节回执，本地墙钟计时，不使用服务端 BPS/DurationMs 计算速度。
-- 上传 CF：POST `https://speed.cloudflare.com/__up`，发送预先生成、复用的非零 Uint8Array。二进制请求体由 Loon API 发送；成功 HTTP 200/204 后按请求体大小计上传量，绝不把小响应体计作上传量。设置 Content-Type、CF 的 Origin 与浏览器兼容 User-Agent；自定义地址不附加 CF 的 Origin。
-- CF 与自定义上传计数代表成功 POST 对应的提交字节数，没有独立字节回执；自定义接口须完整读取请求体再返回成功。Apple 额外校验服务端接收字节，缺少、非整数或不符的 Bytes 都判失败。Loon 适配层仅解析最多 4096 字节的小 JSON，不依赖 TextDecoder。
-- 下载 `test_source` 与上传 `upload_source` 独立下拉，均默认 Apple CDN；各自提供 Apple / CF / 自定义。只有对应源为自定义时才读取 test_url / upload_url；选自定义须填写有效地址。为兼容旧脚本参数，缺少 upload_source 且 test_source=custom、已填 upload_url 时保留该上传地址；显式源选择优先。
-- 所有请求显式传 node，超时单位为毫秒。禁用重定向，不改全局代理或策略选择。
+下载 test_source、上传 upload_source 独立选择 Apple CDN（默认）、CF、自定义。只有对应源选自定义时才读取 test_url / upload_url。旧脚本缺少 upload_source 且原自定义地址非空时兼容保留。
 
-## 顺序、预算与失败
+- Apple 下载 `/api/v1/gm/large` 及自定义：普通 HEAD 接受 200，Accept-Ranges 可缺省，明确 none 停止；实际 Range GET 须 206、Content-Range 与真实 Uint8Array 字节数一致，不回退整文件。
+- CF 下载 `https://speed.cloudflare.com/__down?bytes=N`：须 200，真实响应长度与 N 相同。
+- Apple 上传 `/api/v1/gm/slurp`：POST 非零 Uint8Array，成功 200/204 后必须校验 JSON Bytes 与真实请求体相同；不使用服务器 BPS 计速。
+- CF 上传 `/__up` 与自定义：200/204 后按实际请求体字节计数，不使用小响应体；CF 保留 Origin 与兼容 User-Agent。自定义端点须完整读取再成功，没有独立字节回执保证。
 
-默认 direction=both。先运行下载的全部模式，再运行上传。compare 顺序为单路下载、并发下载、单路上传、并发上传，各轮均先预热并排空，再重新正式计时。
+所有请求显式传 node，不修改全局代理或策略组，禁用重定向、Cookie 自动处理与证书忽略。httpVersion=auto 时 HTTPS 优先 h2，HTTP URL 用 h1；可固定 h1/h2。H2/H1 是测速 HTTP 传输，与节点自身代理协议是两回事。
 
-总请求数据预算默认 64 MB。按方向及模式均分，双向 single 每项 32 MB，双向 compare 每项 16 MB，包含各自预热。预热最多使用本轮预算 1/4，提前用完会提前停发。时长或预算先到就停止新请求，在途结束后再进入下一阶段。总预算不是含协议开销的计费流量上限。
+## 自适应负载
 
-失败请求不退款、不重试；本方向的比较中止。明确结束的下载失败后仍可尝试上传，保留部分成功结果。若有请求未回调（包括 HEAD 与预热），不启动后续阶段，避免未知在途与新测量重叠。Generic 总超时为 300 秒，覆盖最大配置下的四轮测量、预热和收尾。
+默认 adaptive=true。关闭时固定块大小、同时启动所选在途数且不自动恢复，用于受控对照。
 
-## 测量口径
+每项正常预热用单路 64 KB 起步，单块最大 256 KB，总预算最多为本轮的 1/8 且不超过 1 MB。每笔完成后按确认字节和耗时平滑调整下一块，单次大小最多翻倍或减半。预热预算用尽可提前结束，不保证一定持续两秒。
 
-正式速度 = 正式成功下载字节（或成功 POST 的请求体字节）/ 正式统一墙钟时间。并发不累加请求时长；等待、服务端响应和收尾都在分母中。预热不进入正式速度，但计总预算、总量与总耗时。MB 为十进制，1 MB/s = 8 Mbps。
+正式测量最多 N 个在途，按 150ms 错峰启动。初始块参考预热结果，随后动态调整，下载/上传上限独立，默认 4000/1000 KB；同时按并发限制自适应的请求载荷总上限约 4 MB，减少完整二进制响应同时驻留。目标完成时长随最短完整请求耗时调整，避免高延迟线路被固定短目标锁在小块请求；目标上限 1.5 秒。临近窗口结束缩小分块并提前停止新增，仍真实等待和统计收尾。
 
-Loon 只给完成回调，不能据此输出真实逐秒峰值。HTTP 并发不证明底层有 N 条独立 TCP 连接；预热不保证完全消除新连接影响。短样本提示增加预算复测。
+自动正式请求的超时 = min(用户上限, max(3000ms, 预计请求耗时 × 4))；预热和 HEAD 用用户上限。每笔另设 timeout+1000ms 的回调兜底，触发后标记未回调，不能假装取消底层请求。日志保存实际 timeout、块大小、HTTP 版本、状态及耗时。
 
-## 节点协议
+## 有限恢复与未知在途
 
-仅用于展示，不影响测速请求目标。读取 `$environment.params.nodeInfo.name/type`；官方 Generic 示例给出对象字段（包括 name、type、address、port、tls），这里只保留匹配目标的协议类型。兼容 JSON 对象字符串，不读取密码、地址或端口，不复制或记录整个 nodeInfo。
+每个方向（compare 的两个模式共享）最多使用一次恢复额度，不能无限重试或自动换源。
 
-nodeInfo.name 必须与实际传入请求的 node 完全匹配；若旧字段 params.node 存在，也必须一致。显式覆盖目标或策略组与节点信息不匹配时显示未知；没有协议元数据时也不根据节点名推断。DIRECT 显示直连。协议别名标准化为 Hysteria2、Trojan、Shadowsocks、VMess 等；未识别的类型显示未知。
+- HEAD 明确的瞬时网络失败可以再检查一次；auto 传输回退 h1，固定 h2 不改版本。
+- 预热明确失败、全部请求都回调结束时，可使用剩余总预算做一次 16 KB 单路探测；成功后再进入正式阶段。
+- 正式阶段失败时先排空所有请求；仅瞬时错误、剩余测量窗口至少 2 秒且有预算时，重新独立测量一次，最多并发减半、上限 256 KB。窗口扣除失败阶段的真实耗时，不能无限延长。
+- 403/429、Range/长度/二进制类型/Apple 回执错误不恢复。请求未回调绝不恢复，也不启动后续方向或比较阶段。
 
-这是节点配置协议的展示，不是底层连接协议、独立 TCP 数量或代理链完整拓扑的检测。不增加网络请求，不调用修改策略的 API。
+任何带错误的阶段不发布速度。恢复只发布独立成功阶段的确认字节/墙钟；失败阶段放入 discardedPhases，字节预留和耗时都计总量，不退款，不把成功片段拼接成虚高 Mbps。恢复后显示实际并发和提示。比较阶段 HTTP 版本或并发条件不适合时不计算比率。
 
-## 原生弹窗
+## 顺序、预算与统计
 
-手机截图证明浏览器式 grid/flex、CSS 变量和背景色在宿主中不能按预期呈现。结果改用内联字号、字体、颜色及普通段落/换行，不设置背景、不使用 class 或 style 块，不依赖脚本、网络字体或图片。统一无衬线，数字收敛为 30px；节点名称下以 11px 显示协议，测速指标仍只显示下载、上传两项及一行总计。原生 HTML 排版器用于兼容性检查，仍需 Loon 真机回归。
+先下载再上传；compare 为单路下载、并发下载、单路上传、并发上传，各自预热、正式计时、排空。64 MB 总请求数据按方向和模式均分，预热、失败及恢复均占预算；不是包含协议开销的计费上限。Generic timeout=420 秒，覆盖最大配置和有限恢复。
 
-成功/部分成功均 `$done({title, htmlMessage})`，渲染异常回退 title/content；关闭通知不影响结果。预热失败直接展示底层 HTTP/网络错误而非笼统阶段文案；HTTPClient 对象错误保留 message/description 与状态。对端关闭连接的长系统错误在弹窗收敛为中文原因，日志和 `$persistentStore` 保存完整明细。
+单路/并发是 HTTP 在途上限，不能宣称独立 TCP 数量。速度为确认的正式成功字节 / 实际墙钟，包含请求等待和收尾；MB 十进制，1 MB/s = 8 Mbps。正式样本不足两秒提示增加预算；收尾超过一秒提示其计入均值。完成回调不能输出真实逐秒峰值、准确中位数或与 CF 浏览器完全相同的指标。
 
-## 构建与分发
+## 协议与原生结果
 
-节点菜单使用 `arrow.up.arrow.down.system`，由 Loon 渲染系统线条图标；品牌 PNG 为透明底，用于插件列表与 README。脚本与品牌图标 Raw URL 均带版本参数。
+协议只读匹配目标名称的 nodeInfo.name/type，兼容 JSON 对象字符串；DIRECT 为直连，缺失、策略组不匹配或未知类型显示未知，不复制完整节点信息。依据 [Loon 官方 Generic 示例](https://github.com/Loon0x00/LoonExampleConfig/blob/master/Script/generic_example.js)。
 
-npm run build 生成 main/dist 的绝对 Raw 脚本地址，附版本参数。安装按钮使用 Loon 官方通用链接，对完整插件 URL 编码。检查在临时目录构建，不覆盖发行包。其他托管必须传 --base-url 重新构建。
+使用无背景内联 Helvetica 字体、段落和换行，节点协议小字、双向 30px Mbps、每项实际并发及总量；最多显示两条去重警告，优先恢复和收尾。失败保留 HTTP/网络原因，未回调显示已确认数据和数量。$done({title,htmlMessage})；渲染异常回退 content，关闭通知不影响结果。菜单用 arrow.up.arrow.down.system，品牌 PNG 透明。
 
-## 一手资料
+## 构建与依据
 
-- [Loon 官方 Generic 节点信息示例](https://github.com/Loon0x00/LoonExampleConfig/blob/master/Script/generic_example.js)
-- [Loon HTTP 请求、POST 二进制及 timeout 单位](https://nsloon.app/docs/Script/script_api/)
-- [Loon Generic 与脚本超时](https://nsloon.app/docs/Script/script_v2/)
-- [Loon Scheme 与通用导入链接](https://nsloon.app/docs/Scheme/)
-- [Cloudflare 官方下载/上传端点](https://github.com/cloudflare/speedtest/blob/main/README.md)
-- [Apple 官方测速配置](https://mensura.cdn-apple.com/api/v1/gm/config)
-- [Apple network-quality 服务端协议](https://github.com/network-quality/server/blob/main/SERVER_SPEC.md)
-- [HTTP Range 语义](https://www.rfc-editor.org/rfc/rfc9110.html#name-range)
-
-核对日期：2026-10-17。
-
-默认单请求超时为 10 秒，参数范围仍为 1–15 秒。旧安装保留的 5 秒值需要用户手动改为 10 或 15 秒；不据超时截图宣称 CF 已封锁节点。
-
-HEAD 声明不能保证后续 GET 分段。Loon 的完成回调 API 无法在读取正文前验证并中断不一致响应；自定义服务器须正确遵守 Range，客户端不会主动改成整文件下载或重试。
-
-当前使用 Apple 的下载与上传端点，并非复刻 networkQuality 的完整 HTTP/2 负载、响应性或 RPM 算法；Loon 请求仍使用已验证的 h1 选项。
+npm run build 生成 main/dist Raw 绝对地址，JS 和图标带版本参数；检查在临时目录构建。其他托管须 --base-url，README 用 Loon 通用导入链接。方法与参考边界见 [测速参考](speedtest-references.md)。MIT，无第三方运行依赖。

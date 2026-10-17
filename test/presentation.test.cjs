@@ -50,3 +50,11 @@ test('协议在节点名称下显示并转义，未知元数据不影响双向�
   r.nodeProtocol='<script>secret</script>';assert.match(view.render(r),/协议 · &lt;script&gt;secret&lt;\/script&gt;/);
   assert.doesNotMatch(view.render(r),/<script>/);
 });
+
+test('恢复后的真实并发数、收尾警告及未回调诊断可见，不将所有警告误标为短样本',()=>{
+ const r=fixture();r.runs[1]={...r.runs[1],concurrency:2,warnings:['已降低负载重测，当前最多 2 路；详情见日志']};
+ assert.match(view.render(r),/2 路并发/);assert.match(view.render(r),/已降低负载重测/);
+ r.runs[0]={...r.runs[0],state:'incomplete',bytesPerSecond:null,warmup:{state:'incomplete',completedBytes:7000000,unresolvedRequests:1,errors:['请求 #8 未按时回调']}};
+ assert.match(view.render(r),/已确认 7\.00 MB · 1 个请求未回调/);
+ const tail=fixture();tail.runs[0].warnings=['收尾等待 7.6 秒，已计入平均速度'];assert.match(view.render(tail),/收尾等待 7\.6 秒/);
+});

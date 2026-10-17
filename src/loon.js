@@ -27,11 +27,12 @@
   }
 
   Promise.resolve().then(function () {
-    log("节点速度测试 v0.3.1 | 脚本已加载");
+    log("节点速度测试 v0.4.0 | 脚本已加载");
     options = LoonSpeedtest.normalizeOptions(typeof $argument === "undefined" ? null : $argument);
     var environment = typeof $environment === "undefined" ? null : $environment;
     options.node = LoonSpeedtest.resolveTarget(options.node, environment);
     options.nodeProtocol = LoonSpeedtest.resolveNodeProtocol(options.node, environment);
+    log("参数 | " + JSON.stringify({ direction: options.direction, mode: options.mode, adaptive: options.adaptive, httpVersion: options.httpVersion, concurrency: options.concurrency, durationMs: options.durationMs, warmupMs: options.warmupMs, downloadChunkLimit: options.chunkBytes, uploadChunkLimit: options.uploadChunkBytes, budgetBytes: options.maxBytes, requestTimeoutMs: options.requestTimeoutMs }));
     return LoonSpeedtest.run(options, {
       now: function () { return Date.now(); },
       setTimeout: function (callback, ms) { setTimeout(callback, ms); },
@@ -42,7 +43,7 @@
           $httpClient[method]({
             url: spec.url, node: spec.node, timeout: spec.timeout, body: spec.body,
             "binary-mode": true, "auto-redirect": false, "auto-cookie": false,
-            insecure: false, alpn: "h1",
+            insecure: false, alpn: spec.alpn,
             headers: Object.assign({ "Cache-Control": "no-cache, no-store", "Accept-Encoding": "identity" }, spec.headers)
           }, function (error, response, data) {
             if (error) {

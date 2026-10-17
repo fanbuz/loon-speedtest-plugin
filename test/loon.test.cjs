@@ -28,7 +28,7 @@ async function execute({ argument, environment, storageThrows = false, notificat
     }, error => callback(error.message));
   }
   const context = {
-    $argument: typeof argument === 'string' ? 'direction=download&test_source=cf&upload_source=cf&warmup=0&' + argument : argument && { direction: 'download', test_source: 'cf', upload_source: 'cf', warmup: 0, ...argument },
+    $argument: typeof argument === 'string' ? 'direction=download&adaptive=false&httpVersion=h1&chunkKB=1000&test_source=cf&upload_source=cf&warmup=0&' + argument : argument && { direction: 'download', adaptive: false, httpVersion: 'h1', chunkKB: 1000, test_source: 'cf', upload_source: 'cf', warmup: 0, ...argument },
     $environment: environment,
     Date: { now: h.runtime.now }, setTimeout: h.runtime.setTimeout,
     console: { log: h.runtime.log },
@@ -194,4 +194,21 @@ test('显式覆盖节点或策略组不套用入口协议，未知协议仍正�
   }
   const r=await execute({argument:{maxMB:4},environment:{params:{policyGroup:'策略组',nodeInfo:{name:'实际节点',type:'Trojan'}}}});
   assert.match(r.doneResults[0].htmlMessage,/协议 · 未知/);assert.ok(r.requests.every(x=>x.node==='策略组'));
+});
+
+test('真实 Loon 适配层支持自动 H2、单路小块预热、有限 H1 恢复与独立上传块',async()=>{
+ let firstPost=true;
+ const r=await execute({argument:{node:'节点 A',adaptive:true,httpVersion:'auto',test_source:'apple',upload_source:'apple',warmup:2,direction:'both',duration:5,maxMB:8,uploadChunkKB:250},reply:s=>{
+   if(s.method==='HEAD')return{status:200,bytes:0,headers:{}};
+   if(s.method==='POST') {
+     if(firstPost){firstPost=false;return new Error('Socket closed by remote peer');}
+     return{status:200,bytes:48,uploadBytes:s.bytes};
+   }
+   return{status:206,binary:true,bytes:s.bytes,headers:{'Content-Range':'bytes 0-'+(s.bytes-1)+'/4294967296'}};
+ }});
+ assert.equal(r.doneCount,1);assert.equal(r.saved[0].value.state,'ok',JSON.stringify(r.saved[0].value));
+ assert.ok(r.requests.some(x=>x.alpn==='h2'));assert.ok(r.requests.some(x=>x.alpn==='h1'));
+ const up=r.saved[0].value.runs[1];assert.equal(up.recovered,true);assert.ok(up.totalScheduledBytes<=up.budgetBytes);
+ assert.ok(r.requests.filter(x=>x.method==='POST').every(x=>x.body.byteLength<=250000 && x.node==='节点 A'));
+ assert.ok(r.logs.some(x=>x.startsWith('参数 | ')));assert.match(r.doneResults[0].htmlMessage,/已降低负载重测/);
 });

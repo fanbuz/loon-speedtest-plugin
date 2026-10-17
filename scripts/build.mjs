@@ -51,6 +51,8 @@ const plugin = [
   '[Argument]',
   'direction = select,"both","download","upload",type=string,tag=测试项目,desc=both 下载和上传 / download 仅下载 / upload 仅上传',
   'mode = select,"single","concurrent","compare",type=string,tag=测速模式,desc=single 单路 / concurrent 并发 / compare 顺序对比',
+  'adaptive = switch,true,type=boolean,tag=自适应测量,desc=小块单路预热、动态分块；明确结束的瞬时故障最多恢复一次',
+  'httpVersion = select,"auto","h2","h1",type=string,tag=测速 HTTP 版本,desc=auto 优先 h2，明确失败时允许一次 h1 兼容恢复',
   'node = input,"",type=string,tag=节点或策略组,desc=填写精确名称；留空时从运行入口获取；直连填 DIRECT',
   'test_source = select,"Apple CDN","Cloudflare","自定义",type=string,tag=下载测速源,desc=下载来源；自定义时填写下方 test_url',
   'test_url = input,"",type=string,tag=自定义下载地址 test_url,desc=仅选择自定义时有效；支持 HEAD 和 Range GET；范围声明可缺省',
@@ -59,13 +61,14 @@ const plugin = [
   'concurrency = select,4,2,8,type=number,tag=并发请求数,desc=仅 concurrent 和 compare 模式使用',
   'duration = select,10,5,15,30,type=number,tag=正式测量时长（秒）,desc=不含预热；到期停止发新请求并等待在途请求完成',
   'warmup = select,2,0,1,3,5,type=number,tag=预热窗口（秒）,desc=到时停发并收尾；最多占本轮预算四分之一；不计平均速度',
-  'chunkKB = select,1000,250,4000,type=number,tag=每块大小（十进制 KB）',
+  'chunkKB = select,4000,1000,250,64,type=number,tag=下载分块上限（KB）,desc=自适应从小块开始；关闭时按固定块大小请求',
+  'uploadChunkKB = select,1000,250,64,4000,type=number,tag=上传分块上限（KB）,desc=与下载独立；自适应从小块开始',
   'maxMB = select,64,16,128,256,type=number,tag=总请求数据预算（十进制 MB）,desc=下载上传及对比各轮均分，包含预热；不含协议开销',
-  'requestTimeout = select,10,5,3,15,type=number,tag=请求超时（秒）',
+  'requestTimeout = select,10,5,3,15,type=number,tag=请求超时上限（秒）,desc=自适应正式阶段按块大小缩短等待，上限由此设置',
   'notify = switch,true,type=boolean,tag=完成后通知',
   '',
   '[Script]',
-  'generic then script(' + JSON.stringify(scriptPath) + ', {${direction}, ${mode}, ${node}, ${test_source}, ${test_url}, ${upload_source}, ${upload_url}, ${concurrency}, ${duration}, ${warmup}, ${chunkKB}, ${maxMB}, ${requestTimeout}, ${notify}}) with tag="节点速度测试", img_url=' + JSON.stringify('arrow.up.arrow.down.system') + ', timeout=300',
+  'generic then script(' + JSON.stringify(scriptPath) + ', {${direction}, ${mode}, ${adaptive}, ${httpVersion}, ${node}, ${test_source}, ${test_url}, ${upload_source}, ${upload_url}, ${concurrency}, ${duration}, ${warmup}, ${chunkKB}, ${uploadChunkKB}, ${maxMB}, ${requestTimeout}, ${notify}}) with tag="节点速度测试", img_url=' + JSON.stringify('arrow.up.arrow.down.system') + ', timeout=420',
   ''
 ].join('\n');
 await writeFile(path.join(destination, 'LoonSpeedtest.plugin'), plugin);

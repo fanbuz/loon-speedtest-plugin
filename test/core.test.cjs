@@ -2,7 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const core = require('../src/core.js');
 const harness = require('./harness.cjs');
-const options = overrides => core.normalizeOptions({ test_source: 'cf', upload_source: 'cf', direction: 'download', node: '测试节点', duration: 3, maxMB: 4, chunkKB: 1000, warmup: 0, ...overrides });
+const options = overrides => core.normalizeOptions({ adaptive: false, httpVersion: 'h1', chunkKB: 1000, test_source: 'cf', upload_source: 'cf', direction: 'download', node: '测试节点', duration: 3, maxMB: 4, chunkKB: 1000, warmup: 0, ...overrides });
 
 test('参数支持对象、JSON 和编码后的查询字符串', () => {
   assert.equal(core.normalizeOptions('node=%E6%B5%8B%E8%AF%95&mode=concurrent').node, '测试');
@@ -108,7 +108,7 @@ test('回调缺失有兜底且不进入第二阶段，未知下载量不伪造�
   assert.equal(result.runs[0].unresolvedRequests, 1);
   assert.equal(result.runs[0].bytesPerSecond, null);
   assert.equal(result.runs.length, 1);
-  assert.equal(h.now, 14000);
+  assert.equal(h.now, 11000);
 });
 
 for (const [label, reply] of [

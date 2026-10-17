@@ -2,7 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const core = require('../src/core.js');
 const harness = require('./harness.cjs');
-const options = overrides => core.normalizeOptions({ test_source: 'cf', upload_source: 'cf', node: '测试节点', duration: 3, maxMB: 8, chunkKB: 1000, warmup: 0, ...overrides });
+const options = overrides => core.normalizeOptions({ adaptive: false, httpVersion: 'h1', chunkKB: 1000, test_source: 'cf', upload_source: 'cf', node: '测试节点', duration: 3, maxMB: 8, chunkKB: 1000, warmup: 0, ...overrides });
 const success = spec => ({ status: 200, binary: true, bytes: spec.method === 'POST' ? 0 : spec.bytes });
 
 test('默认下载上传；独立上传预设忽略自定义字段，单独上传不要求下载 URL', () => {

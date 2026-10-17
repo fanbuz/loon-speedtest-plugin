@@ -2,7 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const core = require('../src/core.js');
 const harness = require('./harness.cjs');
-const options = overrides => core.normalizeOptions({ test_source: 'cf', upload_source: 'cf', direction: 'download', node: '测试节点', duration: 3, maxMB: 4, warmup: 0, ...overrides });
+const options = overrides => core.normalizeOptions({ adaptive: false, httpVersion: 'h1', chunkKB: 1000, test_source: 'cf', upload_source: 'cf', direction: 'download', node: '测试节点', duration: 3, maxMB: 4, warmup: 0, ...overrides });
 const goodRange = spec => ({
   status: spec.method === 'HEAD' ? 200 : 206, binary: true, bytes: spec.method === 'HEAD' ? 0 : spec.bytes,
   headers: spec.method === 'HEAD' ? { 'Accept-Ranges': 'bytes', 'Content-Length': '4294967296' } : { 'Content-Range': 'bytes 0-' + (spec.bytes - 1) + '/4294967296', 'Content-Length': String(spec.bytes) }

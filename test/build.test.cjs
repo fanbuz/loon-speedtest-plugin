@@ -17,17 +17,17 @@ test('OSS 构建使用完整对象目录，生成同目录绝对脚本 URL', () 
   const result = build('--base-url', 'https://assets.example.com/loon/dist/');
   assert.equal(result.status, 0, result.stderr);
   const plugin = readFileSync(path.join(directory, 'LoonSpeedtest.plugin'), 'utf8');
-  assert.match(plugin, /script\("https:\/\/assets\.example\.com\/loon\/dist\/loon-speedtest\.js\?v=0\.3\.1"/);
+  assert.match(plugin, /script\("https:\/\/assets\.example\.com\/loon\/dist\/loon-speedtest\.js\?v=0\.4\.0"/);
   assert.doesNotMatch(plugin, /192\.168\./);
   assert.match(plugin, /#!icon = https:\/\/assets\.example\.com\/loon\/dist\/icon\.png/);
-  assert.match(readFileSync(path.join(directory, 'loon-speedtest.js'), 'utf8'), /v0\.3\.1/);
+  assert.match(readFileSync(path.join(directory, 'loon-speedtest.js'), 'utf8'), /v0\.4\.0/);
 }));
 
 test('默认构建固定使用当前仓库的 GitHub Raw，避免遗留局域网地址', () => withBuild((directory, build) => {
   const result = build();
   assert.equal(result.status, 0, result.stderr);
   const plugin = readFileSync(path.join(directory, 'LoonSpeedtest.plugin'), 'utf8');
-  assert.match(plugin, /script\("https:\/\/raw\.githubusercontent\.com\/fanbuz\/loon-speedtest-plugin\/main\/dist\/loon-speedtest\.js\?v=0\.3\.1"/);
+  assert.match(plugin, /script\("https:\/\/raw\.githubusercontent\.com\/fanbuz\/loon-speedtest-plugin\/main\/dist\/loon-speedtest\.js\?v=0\.4\.0"/);
   assert.doesNotMatch(plugin, /192\.168\./);
   assert.match(plugin, /#!name = 节点速度测试/);
   assert.match(plugin, /direction = select,"both"/);
@@ -35,8 +35,12 @@ test('默认构建固定使用当前仓库的 GitHub Raw，避免遗留局域网
   assert.match(plugin, /upload_source = select,"Apple CDN","Cloudflare","自定义"/);
   assert.match(plugin, /upload_url = input/);
   assert.match(plugin, /img_url="arrow.up.arrow.down.system"/);
-  assert.match(plugin, /#!icon = .*icon\.png\?v=0\.3\.1/);
-  assert.match(plugin, /timeout=300/);
+  assert.match(plugin, /#!icon = .*icon\.png\?v=0\.4\.0/);
+  assert.match(plugin, /adaptive = switch,true/);
+  assert.match(plugin, /httpVersion = select,"auto","h2","h1"/);
+  assert.match(plugin, /uploadChunkKB = select/);
+  assert.ok(plugin.includes("${adaptive}") && plugin.includes("${httpVersion}") && plugin.includes("${uploadChunkKB}"));
+  assert.match(plugin, /timeout=420/);
 }));
 
 test('只有明确 --local 才生成本地脚本引用', () => withBuild((directory, build) => {

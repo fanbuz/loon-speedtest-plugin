@@ -6,7 +6,7 @@ const path = require('node:path');
 const harness = require('./harness.cjs');
 const script = ['core.js', 'presentation.js', 'loon.js'].map(name => fs.readFileSync(path.join(__dirname, '../src', name), 'utf8')).join('\n;\n');
 
-async function execute({ argument, environment, storageThrows = false, notificationThrows = false, dataType, reply, callbackError, delay = 200 } = {}) {
+async function execute({ argument, environment, loonRuntime, storageThrows = false, notificationThrows = false, dataType, reply, callbackError, delay = 200 } = {}) {
   const h = harness({ delay, reply });
   let doneCount = 0;
   let completed;
@@ -28,6 +28,7 @@ async function execute({ argument, environment, storageThrows = false, notificat
     }, error => callback(error.message));
   }
   const context = {
+    $loon: loonRuntime,
     $argument: typeof argument === 'string' ? 'direction=download&adaptive=false&httpVersion=h1&chunkKB=1000&test_source=cf&upload_source=cf&warmup=0&' + argument : argument && { direction: 'download', adaptive: false, httpVersion: 'h1', chunkKB: 1000, test_source: 'cf', upload_source: 'cf', warmup: 0, ...argument },
     $environment: environment,
     Date: { now: h.runtime.now }, setTimeout: h.runtime.setTimeout,
@@ -75,6 +76,26 @@ test('查询字符串参数与节点入口兼容，可关闭通知', async () =>
   assert.equal(result.notifications.length, 0);
   assert.match(result.doneResults[0].htmlMessage, /入口节点/);
   assert.equal(result.saved[0].value.state, 'ok');
+});
+
+test('旧版命名参数的字符串数值与特殊字符完整保留，双向并发和协议展示可用', async () => {
+  const node = '节点 A, "B" & + % ${node}';
+  const download = 'https://test.example/large?token=a%2Bb&part=1,2&label=%22x%22';
+  const upload = 'https://test.example/slurp?token=one+two&part=3,4';
+  const r = await execute({ argument: {
+    direction: 'both', mode: 'compare', adaptive: 'true', httpVersion: 'auto',
+    node, test_source: '自定义', test_url: download, upload_source: '自定义', upload_url: upload,
+    concurrency: '2', duration: '3', warmup: '1', chunkKB: '250', uploadChunkKB: '250', maxMB: '4', requestTimeout: '10', notify: 'false'
+  }, environment: { params: { node, nodeInfo: { name: node, type: 'Trojan' } } }, loonRuntime: 'iPhone15,2 17.0 3.2.1(745)' });
+  assert.equal(r.saved[0].value.state, 'ok');
+  assert.equal(r.saved[0].value.version, '0.4.1');
+  assert.deepEqual(Array.from(r.saved[0].value.runs, run => [run.direction, run.concurrency]), [['download', 1], ['download', 2], ['upload', 1], ['upload', 2]]);
+  assert.ok(r.requests.every(request => request.node === node && request.url === (request.method === 'POST' ? upload : download)));
+  assert.ok(r.requests.every(request => request.alpn === 'h2' && request['binary-mode'] && request['auto-cookie'] === false));
+  assert.equal(r.notifications.length, 0);
+  assert.equal(r.doneCount, 1);
+  assert.match(r.doneResults[0].htmlMessage, /协议 · Trojan/);
+  assert.ok(r.logs.includes('Loon 运行时 | iPhone15,2 17.0 3.2.1(745)'));
 });
 
 test('存储与通知失败不影响脚本结束', async () => {

@@ -17,37 +17,51 @@ test('OSS 构建使用完整对象目录，生成同目录绝对脚本 URL', () 
   const result = build('--base-url', 'https://assets.example.com/loon/dist/');
   assert.equal(result.status, 0, result.stderr);
   const plugin = readFileSync(path.join(directory, 'LoonSpeedtest.plugin'), 'utf8');
-  assert.match(plugin, /script\("https:\/\/assets\.example\.com\/loon\/dist\/loon-speedtest\.js\?v=0\.4\.0"/);
+  assert.match(plugin, /generic script-path=https:\/\/assets\.example\.com\/loon\/dist\/loon-speedtest\.js\?v=0\.4\.1,/);
   assert.doesNotMatch(plugin, /192\.168\./);
   assert.match(plugin, /#!icon = https:\/\/assets\.example\.com\/loon\/dist\/icon\.png/);
-  assert.match(readFileSync(path.join(directory, 'loon-speedtest.js'), 'utf8'), /v0\.4\.0/);
+  assert.match(readFileSync(path.join(directory, 'loon-speedtest.js'), 'utf8'), /v0\.4\.1/);
 }));
 
 test('默认构建固定使用当前仓库的 GitHub Raw，避免遗留局域网地址', () => withBuild((directory, build) => {
   const result = build();
   assert.equal(result.status, 0, result.stderr);
   const plugin = readFileSync(path.join(directory, 'LoonSpeedtest.plugin'), 'utf8');
-  assert.match(plugin, /script\("https:\/\/raw\.githubusercontent\.com\/fanbuz\/loon-speedtest-plugin\/main\/dist\/loon-speedtest\.js\?v=0\.4\.0"/);
+  assert.match(plugin, /generic script-path=https:\/\/raw\.githubusercontent\.com\/fanbuz\/loon-speedtest-plugin\/main\/dist\/loon-speedtest\.js\?v=0\.4\.1,/);
   assert.doesNotMatch(plugin, /192\.168\./);
   assert.match(plugin, /#!name = 节点速度测试/);
   assert.match(plugin, /direction = select,"both"/);
   assert.match(plugin, /test_source = select,"Apple CDN","Cloudflare","自定义"/);
   assert.match(plugin, /upload_source = select,"Apple CDN","Cloudflare","自定义"/);
   assert.match(plugin, /upload_url = input/);
-  assert.match(plugin, /img_url="arrow.up.arrow.down.system"/);
-  assert.match(plugin, /#!icon = .*icon\.png\?v=0\.4\.0/);
+  assert.match(plugin, /img-url=arrow.up.arrow.down.system/);
+  assert.match(plugin, /#!icon = .*icon\.png\?v=0\.4\.1/);
   assert.match(plugin, /adaptive = switch,true/);
   assert.match(plugin, /httpVersion = select,"auto","h2","h1"/);
   assert.match(plugin, /uploadChunkKB = select/);
-  assert.ok(plugin.includes("${adaptive}") && plugin.includes("${httpVersion}") && plugin.includes("${uploadChunkKB}"));
+  assert.ok(plugin.includes("{adaptive}") && plugin.includes("{httpVersion}") && plugin.includes("{uploadChunkKB}"));
   assert.match(plugin, /timeout=420/);
 }));
 
 test('只有明确 --local 才生成本地脚本引用', () => withBuild((directory, build) => {
   const result = build('--local');
   assert.equal(result.status, 0, result.stderr);
-  assert.match(readFileSync(path.join(directory, 'LoonSpeedtest.plugin'), 'utf8'), /script\("loon-speedtest\.js"/);
+  assert.match(readFileSync(path.join(directory, 'LoonSpeedtest.plugin'), 'utf8'), /generic script-path=loon-speedtest\.js,/);
   assert.match(result.stdout, /本地脚本引用配置/);
+}));
+
+test('兼容入口使用官方旧版命名参数绑定，所有设置恰好传入一次', () => withBuild((directory, build) => {
+  assert.equal(build().status, 0);
+  const plugin = readFileSync(path.join(directory, 'LoonSpeedtest.plugin'), 'utf8');
+  assert.match(plugin, /#!loon_version = 3\.2\.1\(745\)/);
+  assert.doesNotMatch(plugin, /generic then|\$\{|,type=/);
+  const declarations = plugin.split('[Argument]\n')[1].split('[Script]')[0].trim().split('\n').map(line => line.split(' = ')[0]);
+  const bindings = plugin.match(/argument=\[([^\]]+)\]/)[1].split(',').map(value => {
+    assert.match(value, /^\{[A-Za-z_]+\}$/);
+    return value.slice(1, -1);
+  });
+  assert.deepEqual(bindings, declarations);
+  assert.equal(new Set(bindings).size, 17);
 }));
 
 test('拒绝不明确的目录 URL 和冲突参数', () => withBuild((directory, build) => {

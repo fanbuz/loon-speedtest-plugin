@@ -6,12 +6,12 @@
   <a href="https://github.com/fanbuz/loon-speedtest-plugin/releases/latest"><img src="https://img.shields.io/github/v/release/fanbuz/loon-speedtest-plugin?color=338276" alt="版本"></a>
   <a href="https://github.com/fanbuz/loon-speedtest-plugin/actions/workflows/check.yml"><img src="https://github.com/fanbuz/loon-speedtest-plugin/actions/workflows/check.yml/badge.svg" alt="构建状态"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-527caa" alt="MIT License"></a>
-  <a href="https://nsloon.app/"><img src="https://img.shields.io/badge/Loon-3.5.1%20%28983%29%2B-777777" alt="Loon 3.5.1 (983)+"></a>
+  <a href="https://nsloon.app/"><img src="https://img.shields.io/badge/Loon-3.2.1%20%28745%29%2B-777777" alt="Loon 3.2.1 (745)+"></a>
 </p>
 <p align="center">
-  <a href="https://www.nsloon.com/openloon/import?plugin=https%3A%2F%2Fraw.githubusercontent.com%2Ffanbuz%2Floon-speedtest-plugin%2Fmain%2Fdist%2FLoonSpeedtest.plugin%3Fv%3D0.4.0"><img src="assets/add-to-loon.svg" width="276" height="76" alt="一键添加到 Loon"></a>
+  <a href="https://www.nsloon.com/openloon/import?plugin=https%3A%2F%2Fraw.githubusercontent.com%2Ffanbuz%2Floon-speedtest-plugin%2Fmain%2Fdist%2FLoonSpeedtest.plugin%3Fv%3D0.4.1"><img src="assets/add-to-loon.svg" width="276" height="76" alt="一键添加到 Loon"></a>
   <br>
-  <a href="https://raw.githubusercontent.com/fanbuz/loon-speedtest-plugin/main/dist/LoonSpeedtest.plugin?v=0.4.0">Raw 安装地址</a> · <a href="https://github.com/fanbuz/loon-speedtest-plugin/releases/latest">下载发行包</a>
+  <a href="https://raw.githubusercontent.com/fanbuz/loon-speedtest-plugin/main/dist/LoonSpeedtest.plugin?v=0.4.1">Raw 安装地址</a> · <a href="https://github.com/fanbuz/loon-speedtest-plugin/releases/latest">下载发行包</a>
 </p>
 
 在 Loon 中测试指定节点的**下载与上传速度**，支持单路、多路并发和顺序对比。
@@ -22,9 +22,11 @@
 2. 插件参数 `node` 填已有节点或策略组的精确名称；直连填 `DIRECT`。
 3. 从 Generic 手动脚本入口运行「节点速度测试」。默认先下载、再上传，每项先用小块单路预热，再按所选模式测量。
 
+兼容目标为 Loon **3.2.1（745）及以上**，旧版真机回归待完成。
+
 结果在节点名称下显示协议（如 Hysteria2、Trojan、Shadowsocks）；从节点菜单运行时读取 Loon 提供的信息，无法确认时显示“协议 · 未知”。
 
-更新后刷新插件和脚本缓存，日志首行应包含 `v0.4.0`。旧安装请确认“自适应测量”已开启，HTTP 版本选 auto。
+更新后刷新插件和脚本缓存，日志首行应包含 `v0.4.1`。旧安装请确认“自适应测量”已开启，HTTP 版本选 auto。
 
 ## 选项
 

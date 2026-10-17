@@ -44,6 +44,10 @@
 
 使用无背景内联 Helvetica 字体、段落和换行，节点协议小字、双向 30px Mbps、每项实际并发及总量；最多显示两条去重警告，优先恢复和收尾。失败保留 HTTP/网络原因，未回调显示已确认数据和数量。$done({title,htmlMessage})；渲染异常回退 content，关闭通知不影响结果。菜单用 arrow.up.arrow.down.system，品牌 PNG 透明。
 
+## 版本兼容
+
+最低兼容目标为 Loon 3.2.1（745）。使用旧版 `generic script-path=...` 和官方 `argument=[{参数名},...]` 命名绑定；`$argument` 仍是对象，不手工拼接用户 URL 或节点名。控件省略新版 `type=`，数字和布尔字符串由核心校验。HTTP/2、二进制传输、原生结果和节点协议保持现有 API。日志补充 `$loon` 运行时字符串。边界与官方依据见 [版本兼容](compatibility.md)；旧版和当前版真机均待回归。
+
 ## 构建与依据
 
 npm run build 生成 main/dist Raw 绝对地址，JS 和图标带版本参数；检查在临时目录构建。其他托管须 --base-url，README 用 Loon 通用导入链接。方法与参考边界见 [测速参考](speedtest-references.md)。MIT，无第三方运行依赖。

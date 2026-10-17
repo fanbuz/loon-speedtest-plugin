@@ -1,0 +1,23 @@
+#!name = Loon 下载测速
+#!author = fanbuz
+#!homepage = https://github.com/fanbuz/loon-speedtest-plugin
+#!icon = https://raw.githubusercontent.com/fanbuz/loon-speedtest-plugin/main/dist/icon.png
+#!desc = v0.1.1 单路和并发下载测速；compare 顺序对比。默认最多请求 64 MB 数据。需要手动运行；无逐秒实时速度。
+#!loon_version = 3.5.1(983)
+#!date = 2026-10-17
+#!tag = 工具,测速
+
+[Argument]
+mode = select,"single","concurrent","compare",type=string,tag=测速模式,desc=single 单路 / concurrent 并发 / compare 顺序对比
+node = input,"",type=string,tag=节点或策略组,desc=填写精确名称；留空时从运行入口获取；直连填 DIRECT
+test_source = select,"Cloudflare","Apple CDN","自定义",type=string,tag=测速源,desc=默认 Cloudflare；Apple 和自定义源先检查分段支持
+test_url = input,"",type=string,tag=自定义 test_url,desc=仅选择自定义时有效；地址须支持 HEAD 和 GET Range
+concurrency = select,4,2,8,type=number,tag=并发请求数,desc=仅 concurrent 和 compare 模式使用
+duration = select,10,5,15,30,type=number,tag=每轮发请求时长（秒）,desc=到期停止发新请求并等待在途请求完成
+chunkKB = select,1000,250,4000,type=number,tag=每块大小（十进制 KB）
+maxMB = select,64,16,128,256,type=number,tag=总请求数据预算（十进制 MB）,desc=compare 两轮均分；不含协议开销及失败请求的未知数据
+requestTimeout = select,5,3,10,15,type=number,tag=请求超时（秒）
+notify = switch,true,type=boolean,tag=完成后通知
+
+[Script]
+generic then script("https://raw.githubusercontent.com/fanbuz/loon-speedtest-plugin/main/dist/loon-speedtest.js", {${mode}, ${node}, ${test_source}, ${test_url}, ${concurrency}, ${duration}, ${chunkKB}, ${maxMB}, ${requestTimeout}, ${notify}}) with tag="下载测速", img_url="https://raw.githubusercontent.com/fanbuz/loon-speedtest-plugin/main/dist/icon.png", timeout=120

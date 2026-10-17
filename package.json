@@ -1,0 +1,20 @@
+{
+  "name": "loon-speedtest",
+  "version": "0.1.1",
+  "private": true,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/fanbuz/loon-speedtest-plugin.git"
+  },
+  "description": "Loon 节点单路与并发下载测速实验插件",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "build:local": "node scripts/build.mjs --local",
+    "test": "node --test test/*.test.cjs",
+    "check": "npm test && node scripts/check.mjs",
+    "smoke": "node scripts/smoke.mjs",
+    "serve": "node scripts/serve.mjs"
+  },
+  "engines": { "node": ">=22" }
+}

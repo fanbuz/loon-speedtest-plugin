@@ -1,0 +1,268 @@
+/* Shared engine. No browser APIs and no Loon globals in this file. */
+(function (root, factory) {
+  var api = factory();
+  if (typeof module === "object" && module.exports) module.exports = api;
+  else root.LoonSpeedtest = api;
+})(typeof globalThis !== "undefined" ? globalThis : this, function () {
+  "use strict";
+
+  var SOURCE = "https://speed.cloudflare.com/__down";
+  var APPLE_SOURCE = "https://mensura.cdn-apple.com/api/v1/gm/large";
+  var MB = 1000000;
+
+  function parseArgument(value) {
+    if (value == null || value === "") return {};
+    if (typeof value === "object" && !Array.isArray(value)) return value;
+    if (typeof value !== "string") throw new Error("脚本参数需要是对象、JSON 或查询字符串");
+    if (value.trim().charAt(0) === "{") return parseArgument(JSON.parse(value));
+    var result = Object.create(null);
+    value.split("&").forEach(function (part) {
+      var index = part.indexOf("=");
+      if (index <= 0) throw new Error("参数格式应为 name=value，并以 & 分隔");
+      var decode = function (text) { return decodeURIComponent(text.replace(/\+/g, " ")); };
+      result[decode(part.slice(0, index))] = decode(part.slice(index + 1));
+    });
+    return result;
+  }
+
+  function numberOption(value, fallback, min, max, name, integer) {
+    if (value == null || value === "") value = fallback;
+    if (typeof value !== "number" && typeof value !== "string") throw new Error(name + " 需要是数字");
+    var number = Number(value);
+    if (!isFinite(number) || number < min || number > max || (integer && Math.floor(number) !== number)) {
+      throw new Error(name + " 应为 " + min + "–" + max + (integer ? " 的整数" : " 的数字"));
+    }
+    return number;
+  }
+
+  function normalizeOptions(input) {
+    var raw = parseArgument(input);
+    var mode = raw.mode == null || raw.mode === "" ? "single" : raw.mode;
+    if (["single", "concurrent", "compare"].indexOf(mode) < 0) throw new Error("mode 应为 single、concurrent 或 compare");
+    if (raw.node != null && typeof raw.node !== "string") throw new Error("node 需要是节点或策略组名称");
+    var sources = { cf: "cf", Cloudflare: "cf", apple: "apple", "Apple CDN": "apple", custom: "custom", "自定义": "custom" };
+    var sourceName = raw.test_source == null || raw.test_source === "" ? "cf" : raw.test_source;
+    if (typeof sourceName !== "string") throw new Error("test_source 需要是测速源名称");
+    var testSource = Object.prototype.hasOwnProperty.call(sources, sourceName) ? sources[sourceName] : null;
+    if (!testSource) throw new Error("test_source 应为 Cloudflare、Apple CDN 或 自定义");
+    var testUrl = testSource === "cf" ? SOURCE : APPLE_SOURCE;
+    if (testSource === "custom") {
+      if (typeof raw.test_url !== "string" || !/^https?:\/\/[^\s/?#@]+(?:[/?][^\s#]*)?$/i.test(raw.test_url.trim())) {
+        throw new Error("选择自定义时请填写有效的 HTTP(S) test_url（不能含 URL 用户信息或片段）");
+      }
+      testUrl = raw.test_url.trim();
+    }
+    return {
+      mode: mode,
+      node: (raw.node || "").trim(),
+      testSource: testSource,
+      testUrl: testUrl,
+      concurrency: numberOption(raw.concurrency, 4, 2, 8, "concurrency", true),
+      durationMs: numberOption(raw.duration, 10, 3, 30, "duration", true) * 1000,
+      chunkBytes: numberOption(raw.chunkKB, 1000, 64, 4000, "chunkKB", true) * 1000,
+      maxBytes: numberOption(raw.maxMB, 64, 4, 256, "maxMB", true) * MB,
+      requestTimeoutMs: numberOption(raw.requestTimeout, 5, 1, 15, "requestTimeout", true) * 1000,
+      notify: raw.notify !== false && raw.notify !== "false"
+    };
+  }
+
+  // Only documented node/policyGroup strings are used automatically. nodeInfo is
+  // deliberately not guessed: its internal schema is not publicly specified.
+  function resolveTarget(explicit, environment) {
+    if (typeof explicit === "string" && explicit.trim()) return explicit.trim();
+    var params = environment && environment.params || {};
+    if (typeof params.node === "string" && params.node.trim()) return params.node.trim();
+    if (typeof params.policyGroup === "string" && params.policyGroup.trim()) return params.policyGroup.trim();
+    throw new Error("未指定测速目标：请填写 node，或从提供节点/策略组名称的入口运行；直连请明确填写 DIRECT");
+  }
+
+  function formatRate(bytesPerSecond) {
+    return (bytesPerSecond / MB).toFixed(2) + " MB/s (" + (bytesPerSecond * 8 / MB).toFixed(2) + " Mbps)";
+  }
+
+  function modeLabel(concurrency) { return concurrency === 1 ? "单路" : concurrency + " 路并发"; }
+
+  function sourceLabel(source) { return source === "apple" ? "Apple CDN" : source === "custom" ? "自定义" : "Cloudflare"; }
+
+  function header(headers, name) {
+    var keys = Object.keys(headers || {});
+    for (var i = 0; i < keys.length; i += 1) {
+      if (keys[i].toLowerCase() === name.toLowerCase()) return String(headers[keys[i]]);
+    }
+    return null;
+  }
+
+  function validateRange(response, bytes) {
+    if (!response || response.status !== 206) throw new Error("测速源必须支持 HTTP Range 并返回 206；当前 HTTP " + (response ? response.status : "无响应"));
+    var range = header(response.headers, "content-range");
+    var match = range && /^bytes\s+0-(\d+)\/(\d+)$/i.exec(range);
+    if (!match || Number(match[1]) !== bytes - 1 || Number(match[2]) < bytes) throw new Error("测速源 Content-Range 与请求分块不符");
+    var length = header(response.headers, "content-length");
+    if (length != null && Number(length) !== bytes) throw new Error("测速源 Content-Length 与分块大小不符");
+  }
+
+  function preflight(options, runtime) {
+    if (options.testSource === "cf") return Promise.resolve();
+    if (runtime.log) runtime.log("检查 " + sourceLabel(options.testSource) + " 的 HEAD Range 支持（不下载文件正文）");
+    var bytes = 65536;
+    return new Promise(function (resolve, reject) {
+      var settled = false;
+      function settle(error) {
+        if (settled) return;
+        settled = true;
+        if (error) reject(error); else resolve();
+      }
+      runtime.setTimeout(function () { settle(new Error("测速源分段检查超时；没有发起正文下载")); }, options.requestTimeoutMs + 1000);
+      Promise.resolve().then(function () {
+        return runtime.request({ method: "HEAD", url: options.testUrl, node: options.node, timeout: options.requestTimeoutMs, bytes: bytes, headers: { Range: "bytes=0-" + (bytes - 1) } });
+      }).then(function (response) {
+        if (settled) return;
+        validateRange(response, bytes);
+        settle();
+      }).catch(function (error) { settle(error); });
+    });
+  }
+
+  function runPhase(config, runtime) {
+    return new Promise(function (resolve) {
+      var startedAt = runtime.now();
+      var deadline = startedAt + config.durationMs;
+      var active = 0;
+      var scheduledBytes = 0;
+      var completedBytes = 0;
+      var requests = 0;
+      var successful = 0;
+      var finished = false;
+      var halted = false;
+      var lastProgress = startedAt;
+      var samples = [];
+      var errors = [];
+      var token = String(startedAt) + "-" + String(runtime.random ? runtime.random() : Math.random()).slice(2);
+
+      function log(text) { if (runtime.log) runtime.log(text); }
+
+      function finish(incomplete) {
+        if (finished) return;
+        finished = true;
+        var elapsedMs = Math.max(1, runtime.now() - startedAt);
+        var state = incomplete ? "incomplete" : errors.length ? "failed" : successful ? "ok" : "failed";
+        if (!successful && !errors.length) errors.push("没有获得可用下载样本");
+        var warnings = [];
+        if (state === "ok" && elapsedMs < 2000) warnings.push("样本不足 2 秒；可提高数据预算后复测");
+        var result = {
+          state: state, node: config.node, source: config.testUrl, testSource: config.testSource, concurrency: config.concurrency,
+          startedAt: startedAt, elapsedMs: elapsedMs, targetDurationMs: config.durationMs,
+          budgetBytes: config.maxBytes, scheduledBytes: scheduledBytes,
+          completedBytes: completedBytes, requests: requests, successfulRequests: successful,
+          unresolvedRequests: active, bytesPerSecond: state === "ok" ? completedBytes * 1000 / elapsedMs : null,
+          stopReason: incomplete ? "callback-timeout" : errors.length ? "error" : scheduledBytes >= config.maxBytes ? "budget" : "duration",
+          errors: errors, warnings: warnings, samples: samples
+        };
+        log(modeLabel(config.concurrency) + "结束 | " + state + " | 有效数据 " + (completedBytes / MB).toFixed(2) + " MB | 耗时 " + (elapsedMs / 1000).toFixed(2) + "s");
+        if (result.bytesPerSecond != null) log("平均应用层下载速度：" + formatRate(result.bytesPerSecond));
+        resolve(result);
+      }
+
+      function maybeFinish() {
+        if (active === 0 && (halted || runtime.now() >= deadline || scheduledBytes >= config.maxBytes)) finish(false);
+      }
+
+      function launch(worker) {
+        if (finished || halted || runtime.now() >= deadline || scheduledBytes >= config.maxBytes) {
+          maybeFinish();
+          return;
+        }
+        var bytes = Math.min(config.chunkBytes, config.maxBytes - scheduledBytes);
+        scheduledBytes += bytes; // Reserve before launch; failures never refund the budget.
+        active += 1;
+        requests += 1;
+        var requestId = requests;
+        var requestStart = runtime.now();
+        var spec = {
+          method: "GET",
+          url: config.testSource === "cf" ? config.testUrl + "?bytes=" + bytes + "&loon_test=" + token + "-" + requestId : config.testUrl,
+          headers: config.testSource === "cf" ? {} : { Range: "bytes=0-" + (bytes - 1) },
+          node: config.node, timeout: config.requestTimeoutMs,
+          bytes: bytes, worker: worker, requestId: requestId
+        };
+        Promise.resolve().then(function () { return runtime.request(spec); }).then(function (response) {
+          if (finished) return;
+          if (config.testSource === "cf") {
+            if (!response || response.status !== 200) throw new Error("HTTP " + (response ? response.status : "无响应"));
+          } else validateRange(response, bytes);
+          if (!response.binary) throw new Error("响应不是 Uint8Array；请检查 binary-mode 与 Loon 版本");
+          if (response.bytes !== bytes) throw new Error("响应字节数不符：期望 " + bytes + "，实际 " + response.bytes);
+          completedBytes += response.bytes;
+          successful += 1;
+          samples.push({ requestId: requestId, worker: worker, bytes: response.bytes, startMs: requestStart - startedAt, endMs: runtime.now() - startedAt });
+          if (runtime.now() - lastProgress >= 1000) {
+            lastProgress = runtime.now();
+            log(modeLabel(config.concurrency) + " | " + ((runtime.now() - startedAt) / 1000).toFixed(1) + "s | 已完成 " + (completedBytes / MB).toFixed(2) + " MB（完成回调统计，非逐秒速率）");
+          }
+        }).catch(function (error) {
+          if (finished) return;
+          halted = true;
+          errors.push("请求 #" + requestId + "：" + String(error.message || error));
+          log(errors[errors.length - 1]);
+        }).then(function () {
+          if (finished) return;
+          active -= 1;
+          launch(worker);
+        });
+      }
+
+      log("开始" + modeLabel(config.concurrency) + "下载测速 | 目标：" + config.node);
+      log("源：" + config.testUrl + " | 发请求窗口 " + (config.durationMs / 1000) + "s | 请求数据预算 " + (config.maxBytes / MB) + " MB");
+      // No clearTimeout/setInterval dependency; Loon releases timers at $done().
+      runtime.setTimeout(function () {
+        if (!finished) {
+          if (active) log("已达到发请求时长，等待 " + active + " 个在途请求结束");
+          maybeFinish();
+        }
+      }, config.durationMs);
+      runtime.setTimeout(function () {
+        if (!finished) {
+          halted = true;
+          errors.push("在途请求未按时回调；部分下载量未知，本轮无有效速度结果");
+          finish(true);
+        }
+      }, config.durationMs + config.requestTimeoutMs + 1000);
+      for (var worker = 0; worker < config.concurrency; worker += 1) launch(worker);
+    });
+  }
+
+  async function run(options, runtime) {
+    if (!options.node) throw new Error("测速必须指定目标 node");
+    await preflight(options, runtime);
+    var levels = options.mode === "compare" ? [1, options.concurrency] : [options.mode === "single" ? 1 : options.concurrency];
+    var runs = [];
+    for (var i = 0; i < levels.length; i += 1) {
+      var result = await runPhase(Object.assign({}, options, {
+        concurrency: levels[i], maxBytes: Math.floor(options.maxBytes / levels.length)
+      }), runtime);
+      runs.push(result);
+      // A failed/timed-out phase cannot safely or fairly precede another phase.
+      if (result.state !== "ok") break;
+    }
+    return {
+      version: "0.1.1", mode: options.mode, node: options.node, source: options.testUrl, testSource: options.testSource,
+      state: runs.length === levels.length && runs.every(function (result) { return result.state === "ok"; }) ? "ok" : "failed",
+      budgetBytes: options.maxBytes, runs: runs,
+      comparisonRatio: runs.length === 2 && runs.every(function (result) { return result.state === "ok"; }) && runs[0].bytesPerSecond > 0 ? runs[1].bytesPerSecond / runs[0].bytesPerSecond : null
+    };
+  }
+
+  function summary(result) {
+    var lines = ["目标：" + result.node, "测速源：" + sourceLabel(result.testSource)];
+    result.runs.forEach(function (item) {
+      lines.push(modeLabel(item.concurrency) + "：" + (item.state === "ok" ? formatRate(item.bytesPerSecond) : "无有效速度结果（" + item.state + "）"));
+      lines.push("有效数据 " + (item.completedBytes / MB).toFixed(2) + " MB / " + (item.elapsedMs / 1000).toFixed(2) + "s；停止原因 " + item.stopReason);
+      if (item.errors.length) lines.push(item.errors.join("\n"));
+      if (item.warnings.length) lines.push(item.warnings.join("\n"));
+    });
+    if (result.comparisonRatio != null) lines.push("本次并发/单路：" + result.comparisonRatio.toFixed(2) + " 倍（顺序采样，仅供参考）");
+    return lines.join("\n");
+  }
+
+  return { parseArgument: parseArgument, normalizeOptions: normalizeOptions, resolveTarget: resolveTarget, formatRate: formatRate, run: run, summary: summary };
+});

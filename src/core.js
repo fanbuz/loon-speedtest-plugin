@@ -172,14 +172,54 @@
     if (length != null && Number(length) !== bytes) throw new Error("测速源 Content-Length 与分块大小不符");
   }
 
-  function preflight(options, runtime) {
+  function classifyError(error, status, alpn) {
+    var message = String(error && error.message || error || "");
+    var text = message.replace(/^(?:(?:HEAD 检查失败|(?:GET|HEAD|POST) 请求失败|请求 #\d+)：\s*)+/, "").trim();
+    function classification(kind, retry) { return { kind: kind, recoverable: retry === true }; }
+    if (error && error.unresolvedRequests || /未按时回调|未回调|callback[- ]timeout/i.test(text)) return classification("callback-timeout");
+    // Rejection categories take precedence even if the message also says timeout/reset.
+    if (/certificate|cert[_ -](?:expired|invalid|verify|authority)|self[- ]signed|trust|证书|信任链|SSL.*(?:verify|validation)/i.test(text)) return classification("certificate");
+    if (/\bDNS\b|\bEAI_[A-Z_]+\b|\bENOTFOUND\b|\bgetaddrinfo\b|name resolution|(?:could not|cannot|can't) resolve|host(?:name)? (?:not found|could not be found)|找不到.*(?:主机|服务器)|域名|解析.*(?:失败|超时)|无法解析/i.test(text)) return classification("dns");
+    if (/Content-Range|Content-Length|Accept-Ranges|Uint8Array|Bytes 回执|字节|文件大小无效|范围.*(?:无效|不符)/i.test(text)) return classification("invalid-response");
+    if (/unauthorized|forbidden|authentication|authorization|too many requests|rate[- ]limit|鉴权|认证失败|限流/i.test(text)) return classification("http");
+    var statuses = [], match, pattern = /HTTP\s+(\d{3})(?=\D|$)/ig;
+    if (status != null && isFinite(Number(status))) statuses.push(Number(status));
+    while ((match = pattern.exec(text))) statuses.push(Number(match[1]));
+    if (statuses.some(function (code) { return code >= 400 && [502, 503, 504].indexOf(code) < 0; })) return classification("http");
+    if (/unknown|unclassified|invalid (?:argument|parameter|configuration)|unsupported|not supported|permission denied|access denied|\bEACCES\b|\bEPERM\b|未知|参数.*(?:无效|错误)|配置.*(?:无效|错误)|不支持/i.test(text)) return classification("unknown");
+    if (statuses.some(function (code) { return [502, 503, 504].indexOf(code) >= 0; })) return classification("http", true);
+    if (/需要 HTTP 206|HEAD 206.*无效/i.test(text)) return classification("invalid-response");
+    // Loon's known NSError wrapper repeats the same localized description.
+    var nativeMessage = /^Error Domain=[A-Za-z][A-Za-z0-9._]* Code=-?\d+ "([^"\n]+)" UserInfo=\{NSLocalizedDescription=([^{}\n]+)\}$/.exec(text);
+    if (nativeMessage && nativeMessage[1] === nativeMessage[2]) text = nativeMessage[1];
+    // Match complete known messages; an unexplained suffix must not inherit recovery.
+    var transport = text.replace(/[.!。]+$/, "").trim();
+    if (/^(?:(?:the )?(?:request|connection|connect|read|write|operation|transfer|socket) (?:timed out|timeout)|ETIMEDOUT|timeout|timed out|Node 冒烟请求超时|(?:请求|连接|传输|读取|写入|操作)超时)$/i.test(transport)) return classification("timeout", true);
+    if (/^(?:ECONNRESET|(?:connection|network|socket) reset(?: by (?:remote )?peer)?|(?:socket|connection) closed by (?:remote peer|server)|连接被(?:对端关闭|重置)|连接重置)$/i.test(transport)) return classification("connection", true);
+    if (/^(?:ERR_HTTP2_(?:ERROR|PROTOCOL_ERROR|STREAM_ERROR|SESSION_ERROR|GOAWAY_SESSION)|HTTP\/?2 protocol error|ALPN (?:mismatch|negotiation failed|no common protocol|no supported protocol)|(?:HTTP2|HTTP\/2|ALPN)\s*协议错误)$/i.test(transport) || alpn === "h2" && /^protocol error$/i.test(transport)) return classification("protocol", true);
+    return classification("unknown");
+  }
+
+  function preflight(options, runtime, reports) {
     if (options.direction === "upload" || options.testSource === "cf") return Promise.resolve(null);
     if (runtime.log) runtime.log("检查 " + sourceLabel(options.testSource) + " 的范围能力声明（HEAD 不带 Range，不下载正文）");
     return new Promise(function (resolve, reject) {
       var settled = false;
+      var report = { direction: options.direction, method: "HEAD", alpn: options.alpn, startedAt: runtime.now(), state: "pending" };
+      reports.push(report);
       function settle(error, info) {
         if (settled) return;
         settled = true;
+        report.elapsedMs = Math.max(0, runtime.now() - report.startedAt);
+        report.state = error ? "failed" : "ok";
+        if (error) {
+          var classified = classifyError(error, error.status == null ? report.status : error.status, options.alpn);
+          report.error = String(error.message || error);
+          report.errorKind = classified.kind;
+          report.recoverable = classified.recoverable;
+          report.unresolvedRequests = error.unresolvedRequests || 0;
+        }
+        if (runtime.log) runtime.log("HEAD 结束 | " + report.state + " | HTTP 配置 " + report.alpn + " | HTTP " + (report.status || "无响应") + " | " + report.elapsedMs + "ms" + (error ? " | " + report.errorKind + " | " + report.error : ""));
         if (error) reject(error); else resolve(info);
       }
       runtime.setTimeout(function () {
@@ -190,6 +230,7 @@
       }).then(function (response) {
         if (settled) return;
         var status = response && response.status;
+        report.status = status;
         var ranges = header(response && response.headers, "accept-ranges");
         var length = header(response && response.headers, "content-length");
         if (runtime.log) runtime.log("HEAD 检查：HTTP " + status + " | Accept-Ranges=" + ranges + " | Content-Length=" + length);
@@ -211,16 +252,21 @@
         }
         if (length != null && (!/^\d+$/.test(length) || Number(length) <= 0)) throw new Error("HEAD 返回的文件大小无效");
         settle(null, { status: status, acceptRanges: ranges, contentLength: length });
-      }).catch(function (error) { settle(new Error("HEAD 检查失败：" + String(error.message || error))); });
+      }).catch(function (error) {
+        if (settled) return;
+        var failure = new Error("HEAD 检查失败：" + String(error.message || error));
+        failure.status = error.status == null ? report.status : error.status;
+        report.status = failure.status;
+        failure.unresolvedRequests = error.unresolvedRequests || 0;
+        settle(failure);
+      });
     });
   }
 
   function recoverable(phase) {
     if (!phase || phase.unresolvedRequests || phase.state === "incomplete") return false;
-    return phase.errors.length > 0 && phase.errors.every(function (message) {
-      if (/HTTP\s*(?:4\d\d|50[015-9])/i.test(message)) return false;
-      return /timeout|timed out|超时|socket closed|reset|ECONN|network|protocol error|ERR_HTTP2|ALPN|协议错误|连接|请求失败|HTTP\s*50[234]/i.test(message);
-    });
+    var failed = phase.requestReports.filter(function (report) { return report.state === "failed"; });
+    return failed.length > 0 && failed.length === phase.errors.length && failed.every(function (report) { return report.recoverable; });
   }
 
   function runPhase(config, runtime) {
@@ -254,7 +300,7 @@
         var drainMs = Math.max(0, elapsedMs - config.durationMs);
         if (config.phase !== "warmup" && state === "ok" && elapsedMs < 2000) warnings.push("正式样本不足 2 秒；可提高数据预算后复测");
         if (config.phase !== "warmup" && drainMs > 1000) warnings.push("收尾等待 " + (drainMs / 1000).toFixed(1) + " 秒，已计入平均速度");
-        if (incomplete) requestReports.forEach(function (report) { if (report.state === "pending") { report.state = "unresolved"; report.errorKind = "callback-timeout"; report.elapsedMs = runtime.now() - startedAt - report.startMs; } });
+        if (incomplete) requestReports.forEach(function (report) { if (report.state === "pending") { report.state = "unresolved"; report.errorKind = "callback-timeout"; report.recoverable = false; report.elapsedMs = runtime.now() - startedAt - report.startMs; } });
         var result = {
           state: state, direction: config.direction, phase: config.phase, node: config.node, source: config.testUrl, testSource: config.testSource, concurrency: config.concurrency,
           alpn: config.alpn, adaptive: config.adaptive, startedAt: startedAt, elapsedMs: elapsedMs, targetDurationMs: config.durationMs, drainMs: drainMs,
@@ -286,7 +332,7 @@
         active += 1; requests += 1;
         var requestId = requests;
         var requestStart = runtime.now();
-        var report = { requestId: requestId, worker: worker, bytes: bytes, startMs: requestStart - startedAt, state: "pending" };
+        var report = { requestId: requestId, worker: worker, bytes: bytes, alpn: config.alpn, startMs: requestStart - startedAt, state: "pending" };
         requestReports.push(report);
         var spec = {
           method: config.direction === "upload" ? "POST" : "GET", direction: config.direction, phase: config.phase,
@@ -296,7 +342,7 @@
           node: config.node, timeout: config.adaptive && config.phase !== "warmup" ? Math.min(config.requestTimeoutMs, Math.max(3000, Math.ceil((rateEstimate == null ? targetMs : bytes / rateEstimate) * 4))) : config.requestTimeoutMs, alpn: config.alpn,
           bytes: bytes, worker: worker, requestId: requestId
         };
-        log(phaseName + " #" + requestId + " 发出 | " + spec.method + " | " + bytes + " B | " + config.alpn + " | 超时 " + spec.timeout + "ms");
+        log(phaseName + " #" + requestId + " 发出 | " + spec.method + " | " + bytes + " B | HTTP 配置 " + config.alpn + " | 超时 " + spec.timeout + "ms");
         // This deadline never pretends to cancel the underlying request. If it
         // does not call back, the whole run stops with unresolvedRequests > 0.
         runtime.setTimeout(function () {
@@ -304,6 +350,7 @@
             halted = true;
             report.state = "unresolved";
             report.errorKind = "callback-timeout";
+            report.recoverable = false;
             report.elapsedMs = runtime.now() - requestStart;
             errors.push("请求 #" + requestId + " 未按时回调；传输量未知，已停止后续测量");
             finish(true);
@@ -345,7 +392,10 @@
           if (finished) return;
           halted = true; report.state = "failed";
           report.error = String(error.message || error);
-          report.errorKind = /timeout|timed out|超时/i.test(report.error) ? "timeout" : /socket closed|reset|ECONN/i.test(report.error) ? "connection" : report.status >= 400 ? "http" : /protocol error|ERR_HTTP2|ALPN|协议错误/i.test(report.error) ? "protocol" : /Range|字节|Uint8Array/i.test(report.error) ? "invalid-response" : "network";
+          if (error.status != null) report.status = error.status;
+          var classified = classifyError(error, report.status, config.alpn);
+          report.errorKind = classified.kind;
+          report.recoverable = classified.recoverable;
           errors.push("请求 #" + requestId + "：" + report.error);
         }).then(function () {
           if (finished) return;
@@ -355,7 +405,7 @@
         });
       }
       log("开始" + modeLabel(config.concurrency) + transferName + phaseName + " | 目标：" + config.node);
-      log("源：" + config.testUrl + " | " + config.alpn + " | " + (config.adaptive ? "自适应" : "固定分块") + " | 窗口 " + (config.durationMs / 1000) + "s | 预算 " + (config.maxBytes / MB) + " MB | 分块上限 " + config.chunkBytes + " B");
+      log("源：" + config.testUrl + " | HTTP 配置 " + config.alpn + " | " + (config.adaptive ? "自适应" : "固定分块") + " | 窗口 " + (config.durationMs / 1000) + "s | 预算 " + (config.maxBytes / MB) + " MB | 分块上限 " + config.chunkBytes + " B");
       runtime.setTimeout(function () { if (!finished) { if (active) log(phaseName + "窗口结束，等待 " + active + " 个在途请求；收尾计入均值"); maybeFinish(); } }, config.durationMs);
       for (var worker = 0; worker < config.concurrency; worker += 1) {
         if (config.adaptive && worker > 0) (function (index) { runtime.setTimeout(function () { launch(index); }, index * 150); })(worker);
@@ -370,18 +420,27 @@
     if (!options.node) throw new Error("测速必须指定目标 node");
     var recoveryLeft = options.adaptive ? 1 : 0;
     function fallback() { if (options.httpVersion === "auto") options.alpn = "h1"; recoveryLeft -= 1; }
-    var sourceInfo;
-    try { sourceInfo = await preflight(options, runtime); }
+    var sourceInfo, preflightReports = [], preflightRecoveryAttempted = false;
+    try {
+      try { sourceInfo = await preflight(options, runtime, preflightReports); }
+      catch (error) {
+        var lastReport = preflightReports[preflightReports.length - 1];
+        if (!recoveryLeft || !lastReport || !lastReport.recoverable) throw error;
+        if (runtime.log) runtime.log("HEAD 明确失败，尝试一次兼容检查：" + String(error.message || error));
+        preflightRecoveryAttempted = true;
+        fallback(); sourceInfo = await preflight(options, runtime, preflightReports);
+      }
+    }
     catch (error) {
-      if (!recoveryLeft || !recoverable({ state: "failed", unresolvedRequests: error.unresolvedRequests || 0, errors: [String(error.message || error)] })) throw error;
-      if (runtime.log) runtime.log("HEAD 明确失败，尝试一次兼容检查：" + String(error.message || error));
-      fallback(); sourceInfo = await preflight(options, runtime);
+      error.preflightReports = preflightReports;
+      error.recoveryAttempted = preflightRecoveryAttempted;
+      throw error;
     }
     var levels = options.mode === "compare" ? [1, options.concurrency] : [options.mode === "single" ? 1 : options.concurrency];
     var runs = [];
     for (var i = 0; i < levels.length; i += 1) {
       var phaseBudget = Math.floor(options.maxBytes / levels.length);
-      var warmup = null, discarded = [], used = 0, recovered = false;
+      var warmup = null, discarded = [], used = 0, recoveryAttempted = i === 0 && preflightRecoveryAttempted;
       if (options.warmupMs > 0) {
         var warmupBudget = options.adaptive ? Math.min(1000000, Math.floor(phaseBudget / 8)) : Math.floor(phaseBudget / 4);
         var warmupConcurrency = options.adaptive ? 1 : levels[i];
@@ -391,7 +450,7 @@
         }), runtime);
         used += warmup.scheduledBytes;
         if (warmup.state !== "ok" && recoveryLeft && recoverable(warmup) && phaseBudget - used >= 16000) {
-          discarded.push(warmup); fallback(); recovered = true;
+          discarded.push(warmup); fallback(); recoveryAttempted = true;
           if (runtime.log) runtime.log("预热已回调结束，改用小块单路做一次恢复探测；旧数据不计正式速度");
           warmup = await runPhase(Object.assign({}, options, { phase: "warmup", concurrency: 1, durationMs: 1000, maxBytes: 16000, chunkBytes: 16000, initialChunkBytes: 16000 }), runtime);
           used += warmup.scheduledBytes;
@@ -408,18 +467,20 @@
         used += result.scheduledBytes;
         var remainingMs = options.durationMs - result.elapsedMs;
         if (result.state !== "ok" && recoveryLeft && recoverable(result) && remainingMs >= 2000 && phaseBudget - used >= 16000) {
-          discarded.push(result); fallback(); recovered = true;
+          discarded.push(result); fallback(); recoveryAttempted = true;
           var lowerConcurrency = Math.max(1, Math.floor(levels[i] / 2));
           if (runtime.log) runtime.log("正式阶段已明确结束，降低并发为 " + lowerConcurrency + " 后独立重测一次；失败阶段不计新速度");
           result = await runPhase(Object.assign({}, options, { phase: "measurement", concurrency: lowerConcurrency, durationMs: remainingMs, maxBytes: phaseBudget - used, initialChunkBytes: 16000, chunkBytes: Math.min(options.chunkBytes, 256000) }), runtime);
           used += result.scheduledBytes;
         }
       }
-      result.warmup = warmup; result.discardedPhases = discarded; result.requestedConcurrency = levels[i]; result.recovered = recovered;
+      result.warmup = warmup; result.discardedPhases = discarded; result.requestedConcurrency = levels[i];
+      result.recoveryAttempted = recoveryAttempted;
+      result.recovered = recoveryAttempted && result.state === "ok";
       result.totalElapsedMs = result.elapsedMs + (warmup ? warmup.elapsedMs : 0) + discarded.reduce(function (sum, phase) { return sum + phase.elapsedMs; }, 0);
       result.totalCompletedBytes = result.completedBytes + (warmup ? warmup.completedBytes : 0) + discarded.reduce(function (sum, phase) { return sum + phase.completedBytes; }, 0);
       result.totalScheduledBytes = used; result.budgetBytes = phaseBudget;
-      if (recovered) result.warnings.unshift("已降低负载重测，当前最多 " + result.concurrency + " 路；详情见日志");
+      if (discarded.length) result.warnings.unshift(result.recovered ? "已降低负载重测，当前最多 " + result.concurrency + " 路；详情见日志" : "已尝试降低负载重测，本项仍未完成；详情见日志");
       runs.push(result);
       if (result.state !== "ok") break;
     }
@@ -427,13 +488,14 @@
       version: metadata.version, direction: options.direction, mode: options.mode, node: options.node, nodeProtocol: options.nodeProtocol || null, source: options.testUrl, testSource: options.testSource, sourceInfo: sourceInfo,
       targetSource: options.targetSource || null, targetConflict: options.targetConflict === true,
       state: runs.length === levels.length && runs.every(function (result) { return result.state === "ok"; }) ? "ok" : "failed",
-      budgetBytes: options.maxBytes, runs: runs,
+      budgetBytes: options.maxBytes, runs: runs, preflightReports: preflightReports,
       comparisonRatio: runs.length === 2 && runs.every(function (result) { return result.state === "ok"; }) && runs[1].alpn === runs[0].alpn && runs[1].concurrency > runs[0].concurrency && runs[0].bytesPerSecond > 0 ? runs[1].bytesPerSecond / runs[0].bytesPerSecond : null
     };
   }
 
   async function run(options, runtime) {
     if (!options.node) throw new Error("测速必须指定目标 node");
+    if (runtime.log) runtime.log("并发表示在途请求数；实际协商协议与 TCP 连接数不可由脚本确认");
     var directions = options.direction === "both" ? ["download", "upload"] : [options.direction];
     var uploadBody;
     if (directions.indexOf("upload") >= 0) {
@@ -453,10 +515,11 @@
           direction: direction, maxBytes: Math.floor(options.maxBytes / directions.length), uploadBody: uploadBody
         }), runtime));
       } catch (error) {
-        parts.push({ state: "failed", runs: [{ direction: direction, concurrency: options.mode === "concurrent" ? options.concurrency : 1,
+        parts.push({ state: "failed", preflightReports: error.preflightReports || [], runs: [{ direction: direction, concurrency: options.mode === "concurrent" ? options.concurrency : 1,
           testSource: direction === "upload" ? options.uploadSource : options.testSource, state: "failed", bytesPerSecond: null,
           completedBytes: 0, elapsedMs: 0, totalCompletedBytes: 0, totalElapsedMs: 0, totalScheduledBytes: 0,
-          unresolvedRequests: error.unresolvedRequests || 0, stopReason: "error", warnings: [], errors: [String(error.message || error)] }] });
+          unresolvedRequests: error.unresolvedRequests || 0, recoveryAttempted: error.recoveryAttempted === true, recovered: false,
+          stopReason: "error", warnings: [], errors: [String(error.message || error)] }] });
       }
       var last = parts[parts.length - 1];
       if (last.runs.some(function (item) { return item.unresolvedRequests > 0 || item.warmup && item.warmup.unresolvedRequests > 0; })) break;
@@ -467,7 +530,7 @@
       targetSource: options.targetSource || null, targetConflict: options.targetConflict === true,
       testSource: options.testSource, uploadSource: options.uploadSource, source: options.testUrl, uploadUrl: options.uploadUrl,
       state: ok ? "ok" : runs.some(function (item) { return item.state === "ok"; }) ? "partial" : "failed",
-      budgetBytes: options.maxBytes, runs: runs, comparisonRatio: null };
+      budgetBytes: options.maxBytes, runs: runs, preflightReports: [].concat.apply([], parts.map(function (part) { return part.preflightReports || []; })), comparisonRatio: null };
   }
 
   function summary(result) {

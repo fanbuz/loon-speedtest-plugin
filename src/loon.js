@@ -62,9 +62,11 @@
           }, function (error, response, data) {
             if (error) {
               var detail = typeof error === "string" ? error : error.message || error.localizedDescription || error.description;
-              if (!detail) { try { detail = JSON.stringify(error); } catch (_) { detail = String(error); } }
+              if (typeof detail !== "string" || !detail) detail = "未知网络错误";
               var status = response && response.status;
-              reject(new Error(spec.method + " 请求失败：" + detail + (status ? "（HTTP " + status + "）" : "")));
+              var failure = new Error(spec.method + " 请求失败：" + detail + (status ? "（HTTP " + status + "）" : ""));
+              if (status != null) failure.status = status;
+              reject(failure);
               return;
             }
             var binary = Object.prototype.toString.call(data) === "[object Uint8Array]";

@@ -1,9 +1,10 @@
 /* Shared engine. No browser APIs and no Loon globals in this file. */
 (function (root, factory) {
-  var api = factory();
+  var metadata = typeof module === "object" && module.exports ? require("./metadata.js") : root.LoonSpeedtestMetadata;
+  var api = factory(metadata);
   if (typeof module === "object" && module.exports) module.exports = api;
   else root.LoonSpeedtest = api;
-})(typeof globalThis !== "undefined" ? globalThis : this, function () {
+})(typeof globalThis !== "undefined" ? globalThis : this, function (metadata) {
   "use strict";
 
   var SOURCE = "https://speed.cloudflare.com/__down";
@@ -423,7 +424,7 @@
       if (result.state !== "ok") break;
     }
     return {
-      version: "0.4.2", direction: options.direction, mode: options.mode, node: options.node, nodeProtocol: options.nodeProtocol || null, source: options.testUrl, testSource: options.testSource, sourceInfo: sourceInfo,
+      version: metadata.version, direction: options.direction, mode: options.mode, node: options.node, nodeProtocol: options.nodeProtocol || null, source: options.testUrl, testSource: options.testSource, sourceInfo: sourceInfo,
       targetSource: options.targetSource || null, targetConflict: options.targetConflict === true,
       state: runs.length === levels.length && runs.every(function (result) { return result.state === "ok"; }) ? "ok" : "failed",
       budgetBytes: options.maxBytes, runs: runs,
@@ -462,7 +463,7 @@
     }
     var runs = [].concat.apply([], parts.map(function (part) { return part.runs; }));
     var ok = parts.length === directions.length && parts.every(function (part) { return part.state === "ok"; });
-    return { version: "0.4.2", direction: "both", mode: options.mode, node: options.node, nodeProtocol: options.nodeProtocol || null,
+    return { version: metadata.version, direction: "both", mode: options.mode, node: options.node, nodeProtocol: options.nodeProtocol || null,
       targetSource: options.targetSource || null, targetConflict: options.targetConflict === true,
       testSource: options.testSource, uploadSource: options.uploadSource, source: options.testUrl, uploadUrl: options.uploadUrl,
       state: ok ? "ok" : runs.some(function (item) { return item.state === "ok"; }) ? "partial" : "failed",
@@ -489,5 +490,5 @@
     return { duration: "已达到测量时长", budget: "已达到数据预算", error: "传输出现异常", "callback-timeout": "传输回调超时", "warmup-error": "预热未完成" }[reason] || "测试结束";
   }
 
-  return { parseArgument: parseArgument, normalizeOptions: normalizeOptions, resolveTarget: resolveTarget, resolveTargetDetails: resolveTargetDetails, resolveNodeProtocol: resolveNodeProtocol, resolveNodeProtocolDetails: resolveNodeProtocolDetails, targetNotice: targetNotice, formatRate: formatRate, run: run, summary: summary, stopReasonLabel: stopReasonLabel };
+  return { version: metadata.version, releaseDate: metadata.releaseDate, parseArgument: parseArgument, normalizeOptions: normalizeOptions, resolveTarget: resolveTarget, resolveTargetDetails: resolveTargetDetails, resolveNodeProtocol: resolveNodeProtocol, resolveNodeProtocolDetails: resolveNodeProtocolDetails, targetNotice: targetNotice, formatRate: formatRate, run: run, summary: summary, stopReasonLabel: stopReasonLabel };
 });

@@ -28,7 +28,7 @@
   }
 
   Promise.resolve().then(function () {
-    log("节点速度测试 v0.4.2 | 脚本已加载");
+    log("节点速度测试 v" + LoonSpeedtest.version + " | 脚本已加载");
     if (typeof $loon === "string") log("Loon 运行时 | " + $loon);
     options = LoonSpeedtest.normalizeOptions(typeof $argument === "undefined" ? null : $argument);
     var environment = typeof $environment === "undefined" ? null : $environment;

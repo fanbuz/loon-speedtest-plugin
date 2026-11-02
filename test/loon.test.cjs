@@ -4,6 +4,7 @@ const vm = require('node:vm');
 const fs = require('node:fs');
 const path = require('node:path');
 const harness = require('./harness.cjs');
+const metadata = require('../src/metadata.js');
 const script = ['core.js', 'presentation.js', 'loon.js'].map(name => fs.readFileSync(path.join(__dirname, '../src', name), 'utf8')).join('\n;\n');
 
 async function execute({ argument, environment, loonRuntime, storageThrows = false, notificationThrows = false, dataType, reply, callbackError, delay = 200 } = {}) {
@@ -28,6 +29,7 @@ async function execute({ argument, environment, loonRuntime, storageThrows = fal
     }, error => callback(error.message));
   }
   const context = {
+    LoonSpeedtestMetadata: metadata,
     $loon: loonRuntime,
     $argument: typeof argument === 'string' ? 'direction=download&adaptive=false&httpVersion=h1&chunkKB=1000&test_source=cf&upload_source=cf&warmup=0&' + argument : argument && { direction: 'download', adaptive: false, httpVersion: 'h1', chunkKB: 1000, test_source: 'cf', upload_source: 'cf', warmup: 0, ...argument },
     $environment: environment,
@@ -92,7 +94,7 @@ test('旧版命名参数的字符串数值与特殊字符完整保留，双向�
     concurrency: '2', duration: '3', warmup: '1', chunkKB: '250', uploadChunkKB: '250', maxMB: '4', requestTimeout: '10', notify: 'false'
   }, environment: { params: { node, nodeInfo: { name: node, type: 'Trojan' } } }, loonRuntime: 'iPhone15,2 17.0 3.2.1(745)' });
   assert.equal(r.saved[0].value.state, 'ok');
-  assert.equal(r.saved[0].value.version, '0.4.2');
+  assert.equal(r.saved[0].value.version, metadata.version);
   assert.deepEqual(Array.from(r.saved[0].value.runs, run => [run.direction, run.concurrency]), [['download', 1], ['download', 2], ['upload', 1], ['upload', 2]]);
   assert.ok(r.requests.every(request => request.node === node && request.url === (request.method === 'POST' ? upload : download)));
   assert.ok(r.requests.every(request => request.alpn === 'h2' && request['binary-mode'] && request['auto-cookie'] === false));

@@ -1,6 +1,7 @@
 {
   "name": "loon-speedtest",
-  "version": "0.4.2",
+  "version": "0.5.0",
+  "releaseDate": "2026-11-02",
   "private": true,
   "license": "MIT",
   "repository": {

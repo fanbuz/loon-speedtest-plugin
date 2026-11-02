@@ -60,7 +60,7 @@ const plugin = [
   'mode = select,"single","concurrent","compare",tag=测速模式,desc=single 单路 / concurrent 并发 / compare 顺序对比',
   'adaptive = switch,true,tag=自适应测量,desc=小块单路预热、动态分块；明确结束的瞬时故障最多恢复一次',
   'httpVersion = select,"auto","h2","h1",tag=测速 HTTP 版本,desc=auto 优先 h2，明确失败时允许一次 h1 兼容恢复',
-  'node = input,"",tag=节点或策略组,desc=填写精确名称；留空时从运行入口获取；直连填 DIRECT',
+  'node = input,"",tag=节点或策略组,desc=留空使用入口目标；填写后优先使用配置节点，冲突时结果提示；直连须显式填 DIRECT',
   'test_source = select,"Apple CDN","Cloudflare","自定义",tag=下载测速源,desc=下载来源；自定义时填写下方 test_url',
   'test_url = input,"",tag=自定义下载地址 test_url,desc=仅选择自定义时有效；支持 HEAD 和 Range GET；范围声明可缺省',
   'upload_source = select,"Apple CDN","Cloudflare","自定义",tag=上传测速源,desc=上传来源；与下载独立选择',

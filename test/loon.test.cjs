@@ -55,6 +55,9 @@ test('模拟 Loon API 验证 node/二进制参数、结果保存和单次结束'
   assert.match(result.doneResults[0].htmlMessage, /↓ 下载/);
   assert.match(result.doneResults[0].htmlMessage, /4 路并发/);
   assert.equal(result.notifications.length, 1);
+  assert.deepEqual(result.notifications[0].slice(0, 2), ['节点速度测试', '']);
+  assert.match(result.notifications[0][2], /^节点：节点 A\n/);
+  assert.doesNotMatch(result.notifications[0][2], /节点速度测试/);
   assert.equal(result.saved[0].key, 'loon-speedtest:lastResult');
   assert.equal(result.saved[0].value.state, 'ok');
   assert.equal(result.saved[0].value.runs.reduce((sum, run) => sum + run.completedBytes, 0), 4000000);
@@ -65,6 +68,7 @@ test('没有节点上下文时给出可操作错误并不发请求', async () =>
   const result = await execute();
   assert.equal(result.requests.length, 0);
   assert.equal(result.doneCount, 1);
+  assert.deepEqual(result.notifications[0].slice(0, 2), ['节点速度测试', '测速失败']);
   assert.match(result.notifications[0][2], /未指定测速目标/);
   assert.equal(result.doneResults[0].title, '测速失败');
   assert.match(result.doneResults[0].htmlMessage, /未指定测速目标/);
@@ -88,7 +92,7 @@ test('旧版命名参数的字符串数值与特殊字符完整保留，双向�
     concurrency: '2', duration: '3', warmup: '1', chunkKB: '250', uploadChunkKB: '250', maxMB: '4', requestTimeout: '10', notify: 'false'
   }, environment: { params: { node, nodeInfo: { name: node, type: 'Trojan' } } }, loonRuntime: 'iPhone15,2 17.0 3.2.1(745)' });
   assert.equal(r.saved[0].value.state, 'ok');
-  assert.equal(r.saved[0].value.version, '0.4.1');
+  assert.equal(r.saved[0].value.version, '0.4.2');
   assert.deepEqual(Array.from(r.saved[0].value.runs, run => [run.direction, run.concurrency]), [['download', 1], ['download', 2], ['upload', 1], ['upload', 2]]);
   assert.ok(r.requests.every(request => request.node === node && request.url === (request.method === 'POST' ? upload : download)));
   assert.ok(r.requests.every(request => request.alpn === 'h2' && request['binary-mode'] && request['auto-cookie'] === false));
@@ -112,6 +116,8 @@ test('Loon 未返回二进制时报告失败，不使用 Header 伪造下载量'
   assert.equal(result.saved[0].value.runs[0].completedBytes, 0);
   assert.equal(result.requests.length, 1);
   assert.equal(result.doneResults[0].title, '节点速度测试 · 未完成');
+  assert.deepEqual(result.notifications[0].slice(0, 2), ['节点速度测试', '未完成']);
+  assert.match(result.notifications[0][2], /不是 Uint8Array/);
   assert.match(result.doneResults[0].htmlMessage, /不是 Uint8Array/);
 });
 
@@ -157,6 +163,8 @@ test('复现手机截图：Apple HEAD 无范围声明仍下载，CF 预热错误
     return {status:206,headers:{'Content-Range':'bytes 0-'+(spec.bytes-1)+'/4294967296'},binary:true,bytes:spec.bytes};
   }});
   assert.equal(result.saved[0].value.state,'partial');
+  assert.deepEqual(result.notifications[0].slice(0, 2), ['节点速度测试', '部分完成']);
+  assert.match(result.notifications[0][2], /上传 HTTP 403/);
   assert.equal(result.saved[0].value.runs[0].state,'ok');
   assert.match(result.doneResults[0].htmlMessage,/预热失败 · 请求 #1：上传 HTTP 403/);
   assert.doesNotMatch(result.doneResults[0].htmlMessage,/未声明 Accept-Ranges/);

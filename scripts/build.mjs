@@ -45,7 +45,7 @@ const plugin = [
   ...(baseUrl ? ['#!icon = ' + iconUrl] : []),
   '#!desc = v' + version + ' 指定节点的上传与下载速度测试，支持单路、并发和对比；默认合计 64 MB。',
   '#!loon_version = 3.2.1(745)',
-  '#!date = 2026-10-17',
+  '#!date = 2026-11-02',
   '#!tag = 工具,测速',
   '',
   '[Argument]',

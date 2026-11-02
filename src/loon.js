@@ -18,16 +18,16 @@
       $done(payload);
     }
   }
-  function notify(title, text) {
+  function notify(subtitle, text) {
     if (options && !options.notify) return;
     if (typeof $notification !== "undefined") {
-      try { $notification.post("节点速度测试", title, text); }
+      try { $notification.post("节点速度测试", subtitle, text); }
       catch (error) { log("通知未发送：" + String(error.message || error)); }
     }
   }
 
   Promise.resolve().then(function () {
-    log("节点速度测试 v0.4.1 | 脚本已加载");
+    log("节点速度测试 v0.4.2 | 脚本已加载");
     if (typeof $loon === "string") log("Loon 运行时 | " + $loon);
     options = LoonSpeedtest.normalizeOptions(typeof $argument === "undefined" ? null : $argument);
     var environment = typeof $environment === "undefined" ? null : $environment;
@@ -78,8 +78,9 @@
         if (!$persistentStore.write(JSON.stringify(result), "loon-speedtest:lastResult")) log("本次结果未保存到本地存储");
       } catch (error) { log("本地存储失败：" + String(error.message || error)); }
     }
-    var title = result.state === "ok" ? "节点速度测试" : result.state === "partial" ? "节点速度测试 · 部分完成" : "节点速度测试 · 未完成";
-    notify(title, text);
+    var status = result.state === "ok" ? "" : result.state === "partial" ? "部分完成" : "未完成";
+    var title = "节点速度测试" + (status ? " · " + status : "");
+    notify(status, text);
     done(title, text, result);
   }).catch(function (error) {
     var message = String(error.message || error);

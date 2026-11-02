@@ -401,7 +401,7 @@
       if (result.state !== "ok") break;
     }
     return {
-      version: "0.4.1", direction: options.direction, mode: options.mode, node: options.node, nodeProtocol: options.nodeProtocol || null, source: options.testUrl, testSource: options.testSource, sourceInfo: sourceInfo,
+      version: "0.4.2", direction: options.direction, mode: options.mode, node: options.node, nodeProtocol: options.nodeProtocol || null, source: options.testUrl, testSource: options.testSource, sourceInfo: sourceInfo,
       state: runs.length === levels.length && runs.every(function (result) { return result.state === "ok"; }) ? "ok" : "failed",
       budgetBytes: options.maxBytes, runs: runs,
       comparisonRatio: runs.length === 2 && runs.every(function (result) { return result.state === "ok"; }) && runs[1].alpn === runs[0].alpn && runs[1].concurrency > runs[0].concurrency && runs[0].bytesPerSecond > 0 ? runs[1].bytesPerSecond / runs[0].bytesPerSecond : null
@@ -439,14 +439,14 @@
     }
     var runs = [].concat.apply([], parts.map(function (part) { return part.runs; }));
     var ok = parts.length === directions.length && parts.every(function (part) { return part.state === "ok"; });
-    return { version: "0.4.1", direction: "both", mode: options.mode, node: options.node, nodeProtocol: options.nodeProtocol || null,
+    return { version: "0.4.2", direction: "both", mode: options.mode, node: options.node, nodeProtocol: options.nodeProtocol || null,
       testSource: options.testSource, uploadSource: options.uploadSource, source: options.testUrl, uploadUrl: options.uploadUrl,
       state: ok ? "ok" : runs.some(function (item) { return item.state === "ok"; }) ? "partial" : "failed",
       budgetBytes: options.maxBytes, runs: runs, comparisonRatio: null };
   }
 
   function summary(result) {
-    var lines = ["节点速度测试 · " + result.node, result.direction === "both" ? "下载源：" + sourceLabel(result.testSource) + " · 上传源：" + sourceLabel(result.uploadSource) : "测速源：" + sourceLabel(result.testSource)];
+    var lines = ["节点：" + result.node, result.direction === "both" ? "下载源：" + sourceLabel(result.testSource) + " · 上传源：" + sourceLabel(result.uploadSource) : "测速源：" + sourceLabel(result.testSource)];
     lines.splice(1, 0, "节点协议：" + (result.nodeProtocol || "未知"));
     result.runs.forEach(function (item) {
       lines.push(modeLabel(item.concurrency) + (item.direction === "upload" ? "上传" : "下载") + " · " + sourceLabel(item.testSource) + "：" + (item.state === "ok" ? formatRate(item.bytesPerSecond) : "无有效速度结果（" + item.state + "）"));

@@ -241,3 +241,73 @@ test('真实 Loon 适配层支持自动 H2、单路小块预热、有限 H1 恢�
  assert.ok(r.requests.filter(x=>x.method==='POST').every(x=>x.body.byteLength<=250000 && x.node==='节点 A'));
  assert.ok(r.logs.some(x=>x.startsWith('参数 | ')));assert.match(r.doneResults[0].htmlMessage,/已降低负载重测/);
 });
+
+test('AnyTLS 经 Loon 入口识别，敏感元数据 getter 从不读取或序列化', async () => {
+  const nodeInfo = { name: '节点 A', type: 'AnyTLS' };
+  let sensitiveReads = 0;
+  for (const field of ['address', 'password', 'port', 'toJSON']) Object.defineProperty(nodeInfo, field, { enumerable: true, get() { sensitiveReads++; throw new Error('private-token'); } });
+  for (const info of [nodeInfo, JSON.stringify({ name: '节点 A', type: 'anytls', password: 'private-token' })]) {
+    const r = await execute({ argument: { direction: 'both', maxMB: 4 }, environment: { params: { node: '节点 A', nodeInfo: info } } });
+    assert.equal(r.saved[0].value.nodeProtocol, 'AnyTLS');
+    assert.equal(r.saved[0].value.targetSource, 'entry-node');
+    assert.equal(r.saved[0].value.targetConflict, false);
+    assert.ok(r.requests.every(x => x.node === '节点 A'));
+    assert.match(r.doneResults[0].htmlMessage, /协议 · AnyTLS/);
+    assert.match(r.notifications[0][2], /节点协议：AnyTLS/);
+    assert.ok(r.logs.includes('节点协议诊断 | recognized | 匹配目标且类型已识别'));
+    assert.doesNotMatch(JSON.stringify([r.saved, r.doneResults, r.notifications]), /private-token|recognized|entryTarget|来自插件配置/);
+    assert.doesNotMatch(JSON.stringify(r.logs), /private-token/);
+  }
+  assert.equal(sensitiveReads, 0);
+});
+
+test('协议未知原因只写日志，不进入通知、弹窗或存储', async () => {
+  for (const [nodeInfo, reason] of [[undefined, 'missing-metadata'], ['invalid json', 'invalid-json'], [[], 'invalid-metadata'], [{ name: '节点 B', type: 'AnyTLS' }, 'name-mismatch'], [{ name: '节点 A', type: 7 }, 'invalid-type'], [{ name: '节点 A', type: 'unrecognized-secret' }, 'unsupported-type']]) {
+    const r = await execute({ argument: { node: '节点 A', maxMB: 4 }, environment: { params: { node: '节点 A', nodeInfo } } });
+    assert.equal(r.saved[0].value.nodeProtocol, null);
+    assert.match(r.doneResults[0].htmlMessage, /协议 · 未知/);
+    assert.match(r.notifications[0][2], /节点协议：未知/);
+    assert.ok(r.logs.some(x => x.startsWith('节点协议诊断 | ' + reason + ' | ')));
+    assert.doesNotMatch(JSON.stringify([r.saved, r.doneResults, r.notifications]), /missing-metadata|invalid-json|invalid-metadata|name-mismatch|invalid-type|unsupported-type|unrecognized-secret|节点协议诊断/);
+    assert.doesNotMatch(JSON.stringify(r.logs), /unrecognized-secret/);
+  }
+});
+
+test('配置覆盖入口只添加一行目标提示，双向、通知关闭和 HTML 转义均保持路由', async () => {
+  const node = '<节点 A> & "测试" + %';
+  const environment = { params: { node: '节点 B', nodeInfo: { name: '节点 B', type: 'AnyTLS' } } };
+  for (const direction of ['download', 'both']) {
+    const r = await execute({ argument: { node, direction, maxMB: 4 }, environment });
+    assert.ok(r.requests.every(x => x.node === node));
+    assert.equal(r.saved[0].value.node, node);
+    assert.equal(r.saved[0].value.nodeProtocol, null);
+    assert.equal(r.saved[0].value.targetSource, 'configuration');
+    assert.equal(r.saved[0].value.targetConflict, true);
+    assert.equal((r.doneResults[0].htmlMessage.match(/来自插件配置/g) || []).length, 1);
+    assert.equal((r.notifications[0][2].match(/来自插件配置/g) || []).length, 1);
+    assert.match(r.doneResults[0].htmlMessage, /实际测试 &lt;节点 A&gt; &amp; &quot;测试&quot; \+ %，来自插件配置/);
+    assert.doesNotMatch(r.doneResults[0].htmlMessage, /<节点 A>|AnyTLS|entry-mismatch/);
+    assert.match(r.notifications[0][2], /实际测试 <节点 A> & "测试" \+ %，来自插件配置/);
+    assert.deepEqual(r.notifications[0].slice(0, 2), ['节点速度测试', '']);
+    assert.ok(r.logs.some(x => x.includes('"entryTarget":"节点 B"') && x.includes('"conflict":true')));
+    assert.doesNotMatch(JSON.stringify(r.saved), /entryTarget|entry-mismatch/);
+  }
+  const quiet = await execute({ argument: { node, notify: false, maxMB: 4 }, environment });
+  assert.equal(quiet.notifications.length, 0);
+  assert.equal((quiet.doneResults[0].htmlMessage.match(/来自插件配置/g) || []).length, 1);
+  const same = await execute({ argument: { node: '节点 B', maxMB: 4 }, environment });
+  assert.equal(same.saved[0].value.targetConflict, false);
+  assert.doesNotMatch(JSON.stringify([same.doneResults, same.notifications]), /实际测试|来自插件配置/);
+});
+
+test('配置覆盖入口且 HEAD 失败时，失败页与通知仍各有一行实际目标提示', async () => {
+  const r = await execute({ argument: { node: '节点 A', test_source: 'apple', maxMB: 4 }, environment: { params: { node: '节点 B' } }, reply: () => ({ status: 403, bytes: 0, headers: {} }) });
+  assert.equal(r.doneCount, 1);
+  assert.equal(r.requests.length, 1);
+  assert.equal(r.requests[0].node, '节点 A');
+  assert.equal(r.saved.length, 0);
+  for (const content of [r.doneResults[0].htmlMessage, r.notifications[0][2]]) {
+    assert.equal((content.match(/实际测试 节点 A，来自插件配置/g) || []).length, 1);
+    assert.match(content, /HEAD 返回 HTTP 403/);
+  }
+});

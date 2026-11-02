@@ -24,8 +24,12 @@
   function documentHtml(body) {
     return '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"></head><body>' + body + '</body></html>';
   }
+  function targetNotice(result) {
+    return result && result.targetConflict ? paragraph(text('实际测试 ' + String(result.node).replace(/[\r\n\u2028\u2029]+/g, ' ') + '，来自插件配置', 11)) : '';
+  }
   function render(result) {
     var body = paragraph(text(result.node, 13, 500) + '<br>' + text('协议 · ' + (result.nodeProtocol || '未知'), 11));
+    body += targetNotice(result);
     var warnings = [];
     var elapsed = 0;
     var bytes = 0;
@@ -69,8 +73,8 @@
     uniqueWarnings.slice(0, 2).forEach(function (warning) { body += paragraph(text(warning, 11)); });
     return documentHtml(body);
   }
-  function error(message) {
-    return documentHtml(paragraph(text('本次测试未完成', 15, 600)) + paragraph(text(message, 13)));
+  function error(message, target) {
+    return documentHtml(paragraph(text('本次测试未完成', 15, 600)) + targetNotice(target) + paragraph(text(message, 13)));
   }
   return { render: render, error: error };
 });

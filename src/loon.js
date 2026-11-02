@@ -10,10 +10,11 @@
       finished = true;
       var payload;
       try {
-        payload = { title: title, htmlMessage: result ? LoonSpeedtestView.render(result) : LoonSpeedtestView.error(content) };
+        payload = { title: title, htmlMessage: result ? LoonSpeedtestView.render(result) : LoonSpeedtestView.error(content, options) };
       } catch (error) {
         log("结果页生成失败，使用文本摘要：" + String(error.message || error));
-        payload = { title: title, content: content };
+        var notice = !result && LoonSpeedtest.targetNotice(options);
+        payload = { title: title, content: notice ? notice + "\n" + content : content };
       }
       $done(payload);
     }
@@ -31,8 +32,20 @@
     if (typeof $loon === "string") log("Loon 运行时 | " + $loon);
     options = LoonSpeedtest.normalizeOptions(typeof $argument === "undefined" ? null : $argument);
     var environment = typeof $environment === "undefined" ? null : $environment;
-    options.node = LoonSpeedtest.resolveTarget(options.node, environment);
-    options.nodeProtocol = LoonSpeedtest.resolveNodeProtocol(options.node, environment);
+    var target = LoonSpeedtest.resolveTargetDetails(options.node, environment);
+    options.node = target.node;
+    options.targetSource = target.source;
+    options.targetConflict = target.conflict;
+    var protocol = LoonSpeedtest.resolveNodeProtocolDetails(options.node, environment);
+    options.nodeProtocol = protocol.protocol;
+    log("目标 | " + JSON.stringify({ node: target.node, source: target.source, conflict: target.conflict, entryTarget: target.entryTarget }));
+    var protocolReasons = {
+      direct: "明确直连", recognized: "匹配目标且类型已识别", "missing-metadata": "入口未提供协议信息",
+      "invalid-json": "协议信息 JSON 无效", "invalid-metadata": "协议信息结构无效", "invalid-name": "协议信息缺少有效名称",
+      "entry-mismatch": "入口节点与实际目标不匹配", "name-mismatch": "协议信息名称与实际目标不匹配",
+      "invalid-type": "协议类型字段无效", "unsupported-type": "协议类型尚未识别"
+    };
+    log("节点协议诊断 | " + protocol.reason + " | " + protocolReasons[protocol.reason]);
     log("参数 | " + JSON.stringify({ direction: options.direction, mode: options.mode, adaptive: options.adaptive, httpVersion: options.httpVersion, concurrency: options.concurrency, durationMs: options.durationMs, warmupMs: options.warmupMs, downloadChunkLimit: options.chunkBytes, uploadChunkLimit: options.uploadChunkBytes, budgetBytes: options.maxBytes, requestTimeoutMs: options.requestTimeoutMs }));
     return LoonSpeedtest.run(options, {
       now: function () { return Date.now(); },
@@ -85,7 +98,8 @@
   }).catch(function (error) {
     var message = String(error.message || error);
     log("测速失败：" + message);
-    notify("测速失败", message);
+    var notice = LoonSpeedtest.targetNotice(options);
+    notify("测速失败", notice ? notice + "\n" + message : message);
     done("测速失败", message);
   });
 })();

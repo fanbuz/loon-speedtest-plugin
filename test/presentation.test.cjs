@@ -58,3 +58,21 @@ test('恢复后的真实并发数、收尾警告及未回调诊断可见，不�
  assert.match(view.render(r),/已确认 7\.00 MB · 1 个请求未回调/);
  const tail=fixture();tail.runs[0].warnings=['收尾等待 7.6 秒，已计入平均速度'];assert.match(view.render(tail),/收尾等待 7\.6 秒/);
 });
+
+test('目标冲突提示只占一行且转义，正常和未知协议结果不显示诊断', () => {
+  const result = fixture();
+  assert.doesNotMatch(view.render(result), /实际测试|来自插件配置/);
+  result.node = '<A>\n&B';
+  result.targetConflict = true;
+  result.nodeProtocol = null;
+  const html = view.render(result);
+  assert.equal((html.match(/来自插件配置/g) || []).length, 1);
+  assert.match(html, /实际测试 &lt;A&gt; &amp;B，来自插件配置/);
+  assert.match(html, /协议 · 未知/);
+  assert.match(html, />13\.88<\/span>/);
+  assert.doesNotMatch(html, /<A>|reason|name-mismatch|entry-mismatch/);
+  const error = view.error('HEAD <403>', result);
+  assert.equal((error.match(/来自插件配置/g) || []).length, 1);
+  assert.match(error, /HEAD &lt;403&gt;/);
+  assert.doesNotMatch(view.error('HEAD 403'), /实际测试|来自插件配置/);
+});

@@ -126,13 +126,47 @@ for (const [label, reply] of [
 test('节点协议读取官方示例 name/type 并标准化，JSON 字符串兼容，不影响路由',()=>{
   const environment={params:{node:'节点 A',nodeInfo:{name:'节点 A',type:'Vmess',address:'private.example',port:12345,tls:1}}};
   assert.equal(core.resolveNodeProtocol('节点 A',environment),'VMess');
-  for(const [type,label] of [['Shadowsocks','Shadowsocks'],['ss','Shadowsocks'],['SSR','ShadowsocksR'],['Trojan','Trojan'],['Hysteria2','Hysteria2'],['HY2','Hysteria2'],['vless','VLESS'],['TUIC','TUIC'],['Snell','Snell'],['socks5','SOCKS5']]) {
+  for(const [type,label] of [['Shadowsocks','Shadowsocks'],['ss','Shadowsocks'],['SSR','ShadowsocksR'],['Trojan','Trojan'],['Hysteria2','Hysteria2'],['HY2','Hysteria2'],['vless','VLESS'],['TUIC','TUIC'],['Snell','Snell'],['socks5','SOCKS5'],['AnyTLS','AnyTLS'],['anytls','AnyTLS'],[' AnYtLs ','AnyTLS']]) {
     assert.equal(core.resolveNodeProtocol('节点 A',{params:{nodeInfo:{name:'节点 A',type}}}),label);
   }
   assert.equal(core.resolveNodeProtocol('节点 A',{params:{nodeInfo:JSON.stringify({name:'节点 A',type:'Trojan'})}}),'Trojan');
   assert.equal(core.resolveTarget('节点 B',environment),'节点 B');
   assert.equal(core.resolveNodeProtocol('节点 B',environment),null);
   assert.equal(core.resolveNodeProtocol('DIRECT',environment),'直连');
+});
+
+test('目标来源保持显式优先，入口仅用于兜底和冲突判断', () => {
+  const env = { params: { node: ' 节点 B ', policyGroup: '组' } };
+  Object.defineProperty(env.params, 'nodeInfo', { get() { throw new Error('目标解析不得读取协议元数据'); } });
+  assert.deepEqual(core.resolveTargetDetails(' 节点 A ', env), { node: '节点 A', source: 'configuration', conflict: true, entryTarget: '节点 B' });
+  assert.deepEqual(core.resolveTargetDetails('节点 B', env), { node: '节点 B', source: 'configuration', conflict: false, entryTarget: '节点 B' });
+  assert.deepEqual(core.resolveTargetDetails('', env), { node: '节点 B', source: 'entry-node', conflict: false, entryTarget: '节点 B' });
+  assert.deepEqual(core.resolveTargetDetails('', { params: { policyGroup: '组' } }), { node: '组', source: 'entry-policy-group', conflict: false, entryTarget: '组' });
+  assert.deepEqual(core.resolveTargetDetails('DIRECT', {}), { node: 'DIRECT', source: 'configuration', conflict: false, entryTarget: null });
+  assert.throws(() => core.resolveTargetDetails('', {}), /未指定测速目标/);
+});
+
+test('未知协议给出稳定原因，名称不匹配时不读取 type 或无关敏感字段', () => {
+  const cases = [
+    [undefined, 'missing-metadata'],
+    [{ params: { nodeInfo: 'bad json' } }, 'invalid-json'],
+    [{ params: { nodeInfo: [] } }, 'invalid-metadata'],
+    [{ params: { nodeInfo: {} } }, 'invalid-name'],
+    [{ params: { nodeInfo: { name: 'B', get type() { throw new Error('不得读取其他节点的类型'); } } } }, 'name-mismatch'],
+    [{ params: { node: 'B', get nodeInfo() { throw new Error('冲突入口无需读取元数据'); } } }, 'entry-mismatch'],
+    [{ params: { nodeInfo: { name: 'A', type: null } } }, 'invalid-type'],
+    [{ params: { nodeInfo: { name: 'A', type: 'FutureProtocol' } } }, 'unsupported-type'],
+    [{ params: { nodeInfo: { get name() { throw new Error('损坏属性'); } } } }, 'invalid-metadata']
+  ];
+  for (const [environment, reason] of cases) {
+    assert.deepEqual(core.resolveNodeProtocolDetails('A', environment), { protocol: null, reason });
+    assert.equal(core.resolveNodeProtocol('A', environment), null);
+  }
+  const info = { name: 'A', type: 'AnyTLS' };
+  for (const key of ['address', 'password', 'port', 'toJSON']) Object.defineProperty(info, key, { enumerable: true, get() { throw new Error('不得访问 ' + key); } });
+  assert.deepEqual(core.resolveNodeProtocolDetails('A', { params: { node: 'A', nodeInfo: info } }), { protocol: 'AnyTLS', reason: 'recognized' });
+  assert.deepEqual(core.resolveNodeProtocolDetails('DIRECT', { get params() { throw new Error('直连不读节点信息'); } }), { protocol: '直连', reason: 'direct' });
+  assert.deepEqual(core.resolveNodeProtocolDetails('A', { params: { nodeInfo: JSON.stringify({ name: 'A', type: 'anytls', password: 'private-token' }) } }), { protocol: 'AnyTLS', reason: 'recognized' });
 });
 
 test('协议不能由节点名推断；缺失、不匹配、策略组或损坏元数据均显示未知',()=>{

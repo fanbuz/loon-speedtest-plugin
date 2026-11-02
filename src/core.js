@@ -94,34 +94,56 @@
   }
 
   // Preserve explicit routing; nodeInfo is read separately for display only.
-  function resolveTarget(explicit, environment) {
-    if (typeof explicit === "string" && explicit.trim()) return explicit.trim();
+  function resolveTargetDetails(explicit, environment) {
     var params = environment && environment.params || {};
-    if (typeof params.node === "string" && params.node.trim()) return params.node.trim();
-    if (typeof params.policyGroup === "string" && params.policyGroup.trim()) return params.policyGroup.trim();
+    var configured = typeof explicit === "string" ? explicit.trim() : "";
+    var entryNode = typeof params.node === "string" ? params.node.trim() : "";
+    var entryGroup = typeof params.policyGroup === "string" ? params.policyGroup.trim() : "";
+    var entryTarget = entryNode || entryGroup || null;
+    if (configured) return { node: configured, source: "configuration", conflict: !!entryTarget && configured !== entryTarget, entryTarget: entryTarget };
+    if (entryTarget) return { node: entryTarget, source: entryNode ? "entry-node" : "entry-policy-group", conflict: false, entryTarget: entryTarget };
     throw new Error("未指定测速目标：请填写 node，或从提供节点/策略组名称的入口运行；直连请明确填写 DIRECT");
   }
 
-  function resolveNodeProtocol(target, environment) {
-    if (target === "DIRECT") return "直连";
+  function resolveTarget(explicit, environment) { return resolveTargetDetails(explicit, environment).node; }
+
+  function resolveNodeProtocolDetails(target, environment) {
+    if (target === "DIRECT") return { protocol: "直连", reason: "direct" };
     var params = environment && environment.params || {};
-    var info = params.nodeInfo;
-    // Loon's official generic_example.js documents the name/type object fields.
-    // Accept JSON-serialized objects for compatibility; never parse node names.
-    if (typeof info === "string") {
-      try { info = JSON.parse(info); } catch (_) { return null; }
+    function unknown(reason) { return { protocol: null, reason: reason }; }
+    var type;
+    try {
+      var entryNode = params.node;
+      if (typeof entryNode === "string" && entryNode.trim() && entryNode.trim() !== target) return unknown("entry-mismatch");
+      var info = params.nodeInfo;
+      // Only read name first, then type after the target matches. Never copy or
+      // serialize nodeInfo; even unrelated getters may contain sensitive data.
+      if (info == null || info === "") return unknown("missing-metadata");
+      if (typeof info === "string") {
+        try { info = JSON.parse(info); } catch (_) { return unknown("invalid-json"); }
+      }
+      if (!info || typeof info !== "object" || Array.isArray(info)) return unknown("invalid-metadata");
+      var name = info.name;
+      if (typeof name !== "string" || !name.trim()) return unknown("invalid-name");
+      if (name.trim() !== target) return unknown("name-mismatch");
+      type = info.type;
+      if (typeof type !== "string" || !type.trim()) return unknown("invalid-type");
+    } catch (_) {
+      return unknown("invalid-metadata");
     }
-    if (!info || typeof info !== "object" || Array.isArray(info)) return null;
-    if (typeof info.name !== "string" || info.name.trim() !== target) return null;
-    if (typeof params.node === "string" && params.node.trim() && params.node.trim() !== target) return null;
-    if (typeof info.type !== "string") return null;
     var types = {
       shadowsocks: "Shadowsocks", ss: "Shadowsocks", shadowsocksr: "ShadowsocksR", ssr: "ShadowsocksR",
       vmess: "VMess", vless: "VLESS", trojan: "Trojan", hysteria: "Hysteria", hysteria2: "Hysteria2", hy2: "Hysteria2",
-      tuic: "TUIC", tuicv5: "TUIC v5", snell: "Snell", socks5: "SOCKS5", http: "HTTP", https: "HTTPS", wireguard: "WireGuard", ssh: "SSH"
+      tuic: "TUIC", tuicv5: "TUIC v5", snell: "Snell", socks5: "SOCKS5", http: "HTTP", https: "HTTPS", wireguard: "WireGuard", ssh: "SSH", anytls: "AnyTLS"
     };
-    var key = info.type.trim().toLowerCase();
-    return Object.prototype.hasOwnProperty.call(types, key) ? types[key] : null;
+    var key = type.trim().toLowerCase();
+    return Object.prototype.hasOwnProperty.call(types, key) ? { protocol: types[key], reason: "recognized" } : unknown("unsupported-type");
+  }
+
+  function resolveNodeProtocol(target, environment) { return resolveNodeProtocolDetails(target, environment).protocol; }
+
+  function targetNotice(result) {
+    return result && result.targetConflict ? "实际测试 " + String(result.node).replace(/[\r\n\u2028\u2029]+/g, " ") + "，来自插件配置" : "";
   }
 
   function formatRate(bytesPerSecond) {
@@ -402,6 +424,7 @@
     }
     return {
       version: "0.4.2", direction: options.direction, mode: options.mode, node: options.node, nodeProtocol: options.nodeProtocol || null, source: options.testUrl, testSource: options.testSource, sourceInfo: sourceInfo,
+      targetSource: options.targetSource || null, targetConflict: options.targetConflict === true,
       state: runs.length === levels.length && runs.every(function (result) { return result.state === "ok"; }) ? "ok" : "failed",
       budgetBytes: options.maxBytes, runs: runs,
       comparisonRatio: runs.length === 2 && runs.every(function (result) { return result.state === "ok"; }) && runs[1].alpn === runs[0].alpn && runs[1].concurrency > runs[0].concurrency && runs[0].bytesPerSecond > 0 ? runs[1].bytesPerSecond / runs[0].bytesPerSecond : null
@@ -440,6 +463,7 @@
     var runs = [].concat.apply([], parts.map(function (part) { return part.runs; }));
     var ok = parts.length === directions.length && parts.every(function (part) { return part.state === "ok"; });
     return { version: "0.4.2", direction: "both", mode: options.mode, node: options.node, nodeProtocol: options.nodeProtocol || null,
+      targetSource: options.targetSource || null, targetConflict: options.targetConflict === true,
       testSource: options.testSource, uploadSource: options.uploadSource, source: options.testUrl, uploadUrl: options.uploadUrl,
       state: ok ? "ok" : runs.some(function (item) { return item.state === "ok"; }) ? "partial" : "failed",
       budgetBytes: options.maxBytes, runs: runs, comparisonRatio: null };
@@ -448,6 +472,7 @@
   function summary(result) {
     var lines = ["节点：" + result.node, result.direction === "both" ? "下载源：" + sourceLabel(result.testSource) + " · 上传源：" + sourceLabel(result.uploadSource) : "测速源：" + sourceLabel(result.testSource)];
     lines.splice(1, 0, "节点协议：" + (result.nodeProtocol || "未知"));
+    if (result.targetConflict) lines.splice(1, 0, targetNotice(result));
     result.runs.forEach(function (item) {
       lines.push(modeLabel(item.concurrency) + (item.direction === "upload" ? "上传" : "下载") + " · " + sourceLabel(item.testSource) + "：" + (item.state === "ok" ? formatRate(item.bytesPerSecond) : "无有效速度结果（" + item.state + "）"));
       lines.push("测量数据 " + (item.completedBytes / MB).toFixed(2) + " MB · 测量耗时 " + (item.elapsedMs / 1000).toFixed(2) + " 秒");
@@ -464,5 +489,5 @@
     return { duration: "已达到测量时长", budget: "已达到数据预算", error: "传输出现异常", "callback-timeout": "传输回调超时", "warmup-error": "预热未完成" }[reason] || "测试结束";
   }
 
-  return { parseArgument: parseArgument, normalizeOptions: normalizeOptions, resolveTarget: resolveTarget, resolveNodeProtocol: resolveNodeProtocol, formatRate: formatRate, run: run, summary: summary, stopReasonLabel: stopReasonLabel };
+  return { parseArgument: parseArgument, normalizeOptions: normalizeOptions, resolveTarget: resolveTarget, resolveTargetDetails: resolveTargetDetails, resolveNodeProtocol: resolveNodeProtocol, resolveNodeProtocolDetails: resolveNodeProtocolDetails, targetNotice: targetNotice, formatRate: formatRate, run: run, summary: summary, stopReasonLabel: stopReasonLabel };
 });

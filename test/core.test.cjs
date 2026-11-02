@@ -17,6 +17,66 @@ test('拒绝无效参数而不是静默放大流量或并发', () => {
   }
 });
 
+test('下载与上传共用 URL 校验，保留查询特殊字符并拒绝用户信息和片段', () => {
+  const url = 'https://files.example.com/a%2Fb/测试.bin?signature=a%2Bb%3D&x=%23&y=@/?';
+  for (const direction of ['download', 'upload']) {
+    const field = direction === 'download' ? 'test_url' : 'upload_url';
+    const raw = { direction, test_source: 'custom', upload_source: 'custom', [field]: '  ' + url + '  ' };
+    const normalized = core.normalizeOptions(raw);
+    assert.equal(normalized[direction === 'download' ? 'testUrl' : 'uploadUrl'], url);
+    for (const invalid of [undefined, {}, '', 'file:///tmp/test', 'https://user@example.com/file', 'https://example.com/file#fragment', 'https://example.com/a b']) {
+      assert.throws(() => core.normalizeOptions({ ...raw, [field]: invalid }));
+    }
+  }
+});
+
+test('各测速源的 HEAD、GET 和 POST 保持完整请求约定，上传尾块共用原缓冲区', async () => {
+  const node = '节点 <A> & B';
+  const custom = 'https://files.example.com/a%2Fb?signature=a%2Bb%3D&x=%23&y=@/?';
+  for (const direction of ['download', 'upload']) for (const source of ['cf', 'apple', 'custom']) {
+    const configured = options({ direction, node, test_source: source, upload_source: source, test_url: custom, upload_url: custom, chunkKB: 1500, uploadChunkKB: 1500, requestTimeout: 9, httpVersion: 'h2' });
+    const h = harness({ delay: 500 });
+    const result = await h.settle(core.run(configured, h.runtime));
+    assert.equal(result.state, 'ok');
+    const url = direction === 'upload' ? configured.uploadUrl : configured.testUrl;
+    const head = direction === 'download' && source !== 'cf';
+    if (head) assert.deepEqual(h.calls[0], { method: 'HEAD', url, node, timeout: 9000, bytes: 0, headers: {}, alpn: 'h2', start: 0 });
+    const transfers = h.calls.slice(head ? 1 : 0);
+    assert.deepEqual(transfers.map(call => call.bytes), [1500000, 1500000, 1000000]);
+    for (const [index, call] of transfers.entries()) {
+      const headers = direction === 'upload' ? { 'Content-Type': 'application/octet-stream' } : source === 'cf' ? {} : { Range: 'bytes=0-' + (call.bytes - 1) };
+      if (direction === 'upload' && source === 'cf') Object.assign(headers, { 'User-Agent': 'Mozilla/5.0', Origin: 'https://speed.cloudflare.com' });
+      const expectedUrl = direction === 'download' && source === 'cf' ? url + '?bytes=' + call.bytes + '&loon_test=0-123-' + (index + 1) : url;
+      assert.deepEqual({ ...call, body: undefined }, {
+        method: direction === 'upload' ? 'POST' : 'GET', direction, phase: 'measurement',
+        url: expectedUrl, headers, body: undefined, node, timeout: 9000, alpn: 'h2',
+        bytes: call.bytes, worker: 0, requestId: index + 1, start: (index + (head ? 1 : 0)) * 500
+      });
+      if (direction === 'upload') {
+        assert.ok(call.body instanceof Uint8Array);
+        assert.equal(call.body.byteLength, call.bytes);
+        assert.equal(call.body.buffer, transfers[0].body.buffer);
+        assert.equal(call.body.buffer.byteLength, configured.uploadChunkBytes);
+        assert.equal(call.body.byteOffset, 0);
+      } else assert.equal(call.body, undefined);
+    }
+  }
+});
+
+test('请求构造保留预热超时与自适应正式超时，并尊重用户上限', async () => {
+  for (const direction of ['download', 'upload']) for (const requestTimeout of [1, 9]) {
+    const h = harness({ delay: 100 });
+    const configured = options({ direction, adaptive: true, warmup: 1, requestTimeout });
+    await h.settle(core.run(configured, h.runtime));
+    const warmup = h.calls.filter(call => call.phase === 'warmup');
+    const measurement = h.calls.filter(call => call.phase === 'measurement');
+    assert.ok(warmup.length && measurement.length);
+    assert.ok(warmup.every(call => call.timeout === requestTimeout * 1000));
+    assert.equal(measurement[0].timeout, Math.min(requestTimeout * 1000, 3000));
+    assert.ok(measurement.every(call => call.timeout <= requestTimeout * 1000));
+  }
+});
+
 test('明确目标优先；没有目标时不默认测直连或猜 nodeInfo 字段', () => {
   assert.equal(core.resolveTarget('DIRECT', { params: { node: '代理' } }), 'DIRECT');
   assert.equal(core.resolveTarget('', { params: { node: '节点' } }), '节点');

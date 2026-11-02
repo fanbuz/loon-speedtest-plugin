@@ -12,6 +12,20 @@
   var APPLE_SOURCE = "https://mensura.cdn-apple.com/api/v1/gm/large";
   var APPLE_UPLOAD_SOURCE = "https://mensura.cdn-apple.com/api/v1/gm/slurp";
   var MB = 1000000;
+  // 完整响应回调会同时持有多个分块；这些上限与起始值的单位均为字节。
+  var MAX_INFLIGHT_BUFFER_BYTES = 4000000;
+  var MIN_ADAPTIVE_CHUNK_BYTES = 16000;
+  var INITIAL_ADAPTIVE_CHUNK_BYTES = 64000;
+  // 自适应请求的错峰、目标传输时间与最短超时，单位为毫秒。
+  var WORKER_STAGGER_MS = 150;
+  var DOWNLOAD_TARGET_MS = 750;
+  var UPLOAD_TARGET_MS = 500;
+  var MIN_ADAPTIVE_TIMEOUT_MS = 3000;
+  var ADAPTIVE_TIMEOUT_FACTOR = 4;
+  // 估速采用历史/当前样本加权；尾块只使用剩余窗口的一部分。
+  var RATE_HISTORY_WEIGHT = 0.7;
+  var RATE_SAMPLE_WEIGHT = 0.3;
+  var REMAINING_WINDOW_FACTOR = 0.6;
 
   function parseArgument(value) {
     if (value == null || value === "") return {};
@@ -38,6 +52,13 @@
     return number;
   }
 
+  function customUrl(value, message) {
+    if (typeof value !== "string" || !/^https?:\/\/[^\s/?#@]+(?:[/?][^\s#]*)?$/i.test(value.trim())) {
+      throw new Error(message);
+    }
+    return value.trim();
+  }
+
   function normalizeOptions(input) {
     var raw = parseArgument(input);
     var direction = raw.direction == null || raw.direction === "" ? "both" : raw.direction;
@@ -52,10 +73,7 @@
     if (!testSource) throw new Error("test_source 应为 Cloudflare、Apple CDN 或 自定义");
     var testUrl = testSource === "cf" ? SOURCE : APPLE_SOURCE;
     if (testSource === "custom" && direction !== "upload") {
-      if (typeof raw.test_url !== "string" || !/^https?:\/\/[^\s/?#@]+(?:[/?][^\s#]*)?$/i.test(raw.test_url.trim())) {
-        throw new Error("选择自定义时请填写有效的 HTTP(S) test_url（不能含 URL 用户信息或片段）");
-      }
-      testUrl = raw.test_url.trim();
+      testUrl = customUrl(raw.test_url, "选择自定义时请填写有效的 HTTP(S) test_url（不能含 URL 用户信息或片段）");
     }
     var uploadName = raw.upload_source;
     if (uploadName == null || uploadName === "") {
@@ -66,10 +84,7 @@
     if (!uploadSource) throw new Error("upload_source 应为 Apple CDN、Cloudflare 或 自定义");
     var uploadUrl = uploadSource === "cf" ? UPLOAD_SOURCE : APPLE_UPLOAD_SOURCE;
     if (uploadSource === "custom" && direction !== "download") {
-      if (typeof raw.upload_url !== "string" || !/^https?:\/\/[^\s/?#@]+(?:[/?][^\s#]*)?$/i.test(raw.upload_url.trim())) {
-        throw new Error("upload_url 需要有效的 HTTP(S) POST 接收地址");
-      }
-      uploadUrl = raw.upload_url.trim();
+      uploadUrl = customUrl(raw.upload_url, "upload_url 需要有效的 HTTP(S) POST 接收地址");
     }
     if (raw.adaptive != null && [true, false, "true", "false"].indexOf(raw.adaptive) < 0) throw new Error("adaptive 需要布尔值");
     if (raw.httpVersion != null && raw.httpVersion !== "" && ["auto", "h1", "h2"].indexOf(raw.httpVersion) < 0) throw new Error("httpVersion 应为 auto、h1 或 h2");
@@ -172,6 +187,40 @@
     if (length != null && Number(length) !== bytes) throw new Error("测速源 Content-Length 与分块大小不符");
   }
 
+  // 只构造请求；预算预留、请求体切片和超时决策由调用方显式传入。
+  function buildRequestSpec(input) {
+    if (input.method === "HEAD") {
+      return { method: "HEAD", url: input.url, node: input.node, timeout: input.timeout, bytes: 0, headers: {}, alpn: input.alpn };
+    }
+    var upload = input.direction === "upload";
+    var spec = {
+      method: upload ? "POST" : "GET", direction: input.direction, phase: input.phase,
+      url: input.url, headers: {}, body: undefined,
+      node: input.node, timeout: input.timeout, alpn: input.alpn,
+      bytes: input.bytes, worker: input.worker, requestId: input.requestId
+    };
+    if (upload) {
+      spec.headers["Content-Type"] = "application/octet-stream";
+      if (input.source === "cf") {
+        spec.headers["User-Agent"] = "Mozilla/5.0";
+        spec.headers.Origin = "https://speed.cloudflare.com";
+      }
+      spec.body = input.body;
+    } else if (input.source === "cf") {
+      spec.url += "?bytes=" + input.bytes + "&loon_test=" + input.token + "-" + input.requestId;
+    } else {
+      spec.headers.Range = "bytes=0-" + (input.bytes - 1);
+    }
+    return spec;
+  }
+
+  function requestTimeout(config, bytes, rateEstimate, targetMs) {
+    if (!config.adaptive || config.phase === "warmup") return config.requestTimeoutMs;
+    var estimatedMs = rateEstimate == null ? targetMs : bytes / rateEstimate;
+    var adaptiveTimeout = Math.max(MIN_ADAPTIVE_TIMEOUT_MS, Math.ceil(estimatedMs * ADAPTIVE_TIMEOUT_FACTOR));
+    return Math.min(config.requestTimeoutMs, adaptiveTimeout);
+  }
+
   function classifyError(error, status, alpn) {
     var message = String(error && error.message || error || "");
     var text = message.replace(/^(?:(?:HEAD 检查失败|(?:GET|HEAD|POST) 请求失败|请求 #\d+)：\s*)+/, "").trim();
@@ -226,7 +275,10 @@
         var error = new Error("测速源分段检查超时；没有发起正文下载"); error.unresolvedRequests = 1; settle(error);
       }, options.requestTimeoutMs + 1000);
       Promise.resolve().then(function () {
-        return runtime.request({ method: "HEAD", url: options.testUrl, node: options.node, timeout: options.requestTimeoutMs, bytes: 0, headers: {}, alpn: options.alpn });
+        return runtime.request(buildRequestSpec({
+          method: "HEAD", url: options.testUrl, node: options.node,
+          timeout: options.requestTimeoutMs, alpn: options.alpn
+        }));
       }).then(function (response) {
         if (settled) return;
         var status = response && response.status;
@@ -281,12 +333,13 @@
       var token = String(startedAt) + "-" + String(runtime.random ? runtime.random() : Math.random()).slice(2);
       var phaseName = config.phase === "warmup" ? "预热" : "正式测速";
       // Complete-body callbacks can otherwise buffer N large chunks at once.
-      var chunkLimit = config.adaptive ? Math.min(config.chunkBytes, Math.floor(4000000 / config.concurrency)) : config.chunkBytes;
-      var minChunk = Math.min(16000, chunkLimit);
-      var nextChunk = Math.min(chunkLimit, config.initialChunkBytes || 64000);
+      var chunkLimit = config.chunkBytes;
+      if (config.adaptive) chunkLimit = Math.min(chunkLimit, Math.floor(MAX_INFLIGHT_BUFFER_BYTES / config.concurrency));
+      var minChunk = Math.min(MIN_ADAPTIVE_CHUNK_BYTES, chunkLimit);
+      var nextChunk = Math.min(chunkLimit, config.initialChunkBytes || INITIAL_ADAPTIVE_CHUNK_BYTES);
       var rateEstimate = null;
       var fastestMs = null;
-      var baseTargetMs = config.direction === "upload" ? 500 : 750;
+      var baseTargetMs = config.direction === "upload" ? UPLOAD_TARGET_MS : DOWNLOAD_TARGET_MS;
       var targetMs = baseTargetMs;
       var retiredWorkers = {};
       function log(text) { if (runtime.log) runtime.log(text); }
@@ -326,7 +379,7 @@
         var remaining = deadline - runtime.now();
         if (config.adaptive && requests > 0 && remaining < Math.max(100, Math.min(1000, fastestMs || 100))) { retire(worker); return; }
         var size = config.adaptive ? nextChunk : config.chunkBytes;
-        if (config.adaptive && rateEstimate != null) size = Math.min(size, Math.max(minChunk, Math.floor(rateEstimate * remaining * 0.6)));
+        if (config.adaptive && rateEstimate != null) size = Math.min(size, Math.max(minChunk, Math.floor(rateEstimate * remaining * REMAINING_WINDOW_FACTOR)));
         var bytes = Math.min(size, config.maxBytes - scheduledBytes);
         scheduledBytes += bytes;
         active += 1; requests += 1;
@@ -334,14 +387,14 @@
         var requestStart = runtime.now();
         var report = { requestId: requestId, worker: worker, bytes: bytes, alpn: config.alpn, startMs: requestStart - startedAt, state: "pending" };
         requestReports.push(report);
-        var spec = {
-          method: config.direction === "upload" ? "POST" : "GET", direction: config.direction, phase: config.phase,
-          url: config.direction === "upload" ? config.testUrl : config.testSource === "cf" ? config.testUrl + "?bytes=" + bytes + "&loon_test=" + token + "-" + requestId : config.testUrl,
-          headers: config.direction === "upload" ? Object.assign({ "Content-Type": "application/octet-stream" }, config.testSource === "cf" ? { "User-Agent": "Mozilla/5.0", "Origin": "https://speed.cloudflare.com" } : {}) : config.testSource === "cf" ? {} : { Range: "bytes=0-" + (bytes - 1) },
-          body: config.direction === "upload" ? config.uploadBody.subarray(0, bytes) : undefined,
-          node: config.node, timeout: config.adaptive && config.phase !== "warmup" ? Math.min(config.requestTimeoutMs, Math.max(3000, Math.ceil((rateEstimate == null ? targetMs : bytes / rateEstimate) * 4))) : config.requestTimeoutMs, alpn: config.alpn,
-          bytes: bytes, worker: worker, requestId: requestId
-        };
+        var body;
+        if (config.direction === "upload") body = config.uploadBody.subarray(0, bytes);
+        var spec = buildRequestSpec({
+          direction: config.direction, phase: config.phase, source: config.testSource, url: config.testUrl,
+          body: body, bytes: bytes, token: token, worker: worker, requestId: requestId,
+          node: config.node, alpn: config.alpn,
+          timeout: requestTimeout(config, bytes, rateEstimate, targetMs)
+        });
         log(phaseName + " #" + requestId + " 发出 | " + spec.method + " | " + bytes + " B | HTTP 配置 " + config.alpn + " | 超时 " + spec.timeout + "ms");
         // This deadline never pretends to cancel the underlying request. If it
         // does not call back, the whole run stops with unresolvedRequests > 0.
@@ -377,7 +430,7 @@
           samples.push({ requestId: requestId, worker: worker, bytes: transferred, startMs: requestStart - startedAt, endMs: runtime.now() - startedAt });
           if (config.adaptive) {
             var rate = transferred / elapsed;
-            rateEstimate = rateEstimate == null ? rate : rateEstimate * 0.7 + rate * 0.3;
+            rateEstimate = rateEstimate == null ? rate : rateEstimate * RATE_HISTORY_WEIGHT + rate * RATE_SAMPLE_WEIGHT;
             fastestMs = fastestMs == null ? elapsed : Math.min(fastestMs, elapsed);
             // A fixed sub-RTT target would trap high-latency paths in tiny blocks.
             // Allow longer useful transfers while keeping bounded end-of-window tails.
@@ -408,7 +461,7 @@
       log("源：" + config.testUrl + " | HTTP 配置 " + config.alpn + " | " + (config.adaptive ? "自适应" : "固定分块") + " | 窗口 " + (config.durationMs / 1000) + "s | 预算 " + (config.maxBytes / MB) + " MB | 分块上限 " + config.chunkBytes + " B");
       runtime.setTimeout(function () { if (!finished) { if (active) log(phaseName + "窗口结束，等待 " + active + " 个在途请求；收尾计入均值"); maybeFinish(); } }, config.durationMs);
       for (var worker = 0; worker < config.concurrency; worker += 1) {
-        if (config.adaptive && worker > 0) (function (index) { runtime.setTimeout(function () { launch(index); }, index * 150); })(worker);
+        if (config.adaptive && worker > 0) (function (index) { runtime.setTimeout(function () { launch(index); }, index * WORKER_STAGGER_MS); })(worker);
         else launch(worker);
       }
     });
@@ -446,7 +499,7 @@
         var warmupConcurrency = options.adaptive ? 1 : levels[i];
         warmup = await runPhase(Object.assign({}, options, {
           phase: "warmup", concurrency: warmupConcurrency, durationMs: options.warmupMs, maxBytes: warmupBudget,
-          initialChunkBytes: 64000, chunkBytes: Math.min(options.chunkBytes, options.adaptive ? 256000 : Math.max(1, Math.floor(warmupBudget / levels[i])))
+          initialChunkBytes: INITIAL_ADAPTIVE_CHUNK_BYTES, chunkBytes: Math.min(options.chunkBytes, options.adaptive ? 256000 : Math.max(1, Math.floor(warmupBudget / levels[i])))
         }), runtime);
         used += warmup.scheduledBytes;
         if (warmup.state !== "ok" && recoveryLeft && recoverable(warmup) && phaseBudget - used >= 16000) {
@@ -462,7 +515,7 @@
       } else {
         result = await runPhase(Object.assign({}, options, {
           phase: "measurement", concurrency: levels[i], maxBytes: phaseBudget - used,
-          initialChunkBytes: warmup && options.adaptive ? Math.max(16000, Math.floor(warmup.nextChunkBytes / levels[i])) : 64000
+          initialChunkBytes: warmup && options.adaptive ? Math.max(MIN_ADAPTIVE_CHUNK_BYTES, Math.floor(warmup.nextChunkBytes / levels[i])) : INITIAL_ADAPTIVE_CHUNK_BYTES
         }), runtime);
         used += result.scheduledBytes;
         var remainingMs = options.durationMs - result.elapsedMs;

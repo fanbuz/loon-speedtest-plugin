@@ -1,6 +1,8 @@
 /* Shared engine. No browser APIs and no Loon globals in this file. */
 (function (root, factory) {
-  var metadata = typeof module === "object" && module.exports ? require("./metadata.js") : root.LoonSpeedtestMetadata;
+  // A host may wrap the bundle in a function; injected var is then lexical,
+  // not a property of globalThis. Read the same-scope binding directly.
+  var metadata = typeof module === "object" && module.exports ? require("./metadata.js") : LoonSpeedtestMetadata;
   var api = factory(metadata);
   if (typeof module === "object" && module.exports) module.exports = api;
   else root.LoonSpeedtest = api;

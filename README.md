@@ -9,9 +9,9 @@
   <a href="https://nsloon.app/"><img src="https://img.shields.io/badge/Loon-3.2.1%20%28745%29%2B-777777" alt="Loon 3.2.1 (745)+"></a>
 </p>
 <p align="center">
-  <a href="https://www.nsloon.com/openloon/import?plugin=https%3A%2F%2Fraw.githubusercontent.com%2Ffanbuz%2Floon-speedtest-plugin%2Fmain%2Fdist%2FLoonSpeedtest.plugin%3Fv%3D0.5.0"><img src="assets/add-to-loon.svg" width="276" height="76" alt="一键添加到 Loon"></a>
+  <a href="https://www.nsloon.com/openloon/import?plugin=https%3A%2F%2Fraw.githubusercontent.com%2Ffanbuz%2Floon-speedtest-plugin%2Fmain%2Fdist%2FLoonSpeedtest.plugin%3Fv%3D0.5.1"><img src="assets/add-to-loon.svg" width="276" height="76" alt="一键添加到 Loon"></a>
   <br>
-  <a href="https://raw.githubusercontent.com/fanbuz/loon-speedtest-plugin/main/dist/LoonSpeedtest.plugin?v=0.5.0">Raw 安装地址</a> · <a href="https://github.com/fanbuz/loon-speedtest-plugin/releases/latest">下载发行包</a>
+  <a href="https://raw.githubusercontent.com/fanbuz/loon-speedtest-plugin/main/dist/LoonSpeedtest.plugin?v=0.5.1">Raw 安装地址</a> · <a href="https://github.com/fanbuz/loon-speedtest-plugin/releases/latest">下载发行包</a>
 </p>
 
 在 Loon 中测试指定节点的**下载与上传速度**，支持单路、多路并发和顺序对比。
@@ -26,7 +26,7 @@
 
 结果在节点名称下显示协议（如 AnyTLS、Hysteria2、Trojan）；从节点菜单运行时读取 Loon 提供的信息，无法确认时显示“协议 · 未知”，原因见日志。
 
-更新后刷新插件和脚本缓存，日志首行应包含 `v0.5.0`。旧安装请确认“自适应测量”已开启，HTTP 版本选 auto。
+更新后刷新插件和脚本缓存，日志首行应包含 `v0.5.1`。旧安装请确认“自适应测量”已开启，HTTP 版本选 auto。
 
 ## 选项
 

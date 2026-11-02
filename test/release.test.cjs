@@ -42,9 +42,10 @@ function snapshotDist(f) {
   });
 }
 
-async function executeBundle(source) {
+async function executeBundle(source, { scoped = false, strict = false, globalMetadata } = {}) {
   const h = harness({ delay: 200 });
   const saved = [];
+  const outputs = [];
   let complete;
   const done = new Promise(resolve => { complete = resolve; });
   const request = method => (options, callback) => {
@@ -53,17 +54,47 @@ async function executeBundle(source) {
       callback(null, { status: response.status, headers: response.headers }, new Uint8Array(response.bytes));
     }, error => callback(error.message));
   };
-  vm.runInNewContext(source, {
+  const context = {
+    LoonSpeedtestMetadata: globalMetadata,
     $argument: { node: '节点 A', direction: 'both', test_source: 'cf', upload_source: 'cf', adaptive: false, warmup: 0, duration: 3, maxMB: 4 },
     Date: { now: h.runtime.now }, setTimeout: h.runtime.setTimeout,
-    console: { log: h.runtime.log }, $done: complete,
+    console: { log: h.runtime.log }, $done: value => { outputs.push(value); complete(); },
     $persistentStore: { write: value => { saved.push(JSON.parse(value)); return true; } },
     $httpClient: { get: request('GET'), post: request('POST') }
-  });
+  };
+  // A host may execute the entire script inside a function: top-level var then
+  // belongs to that function, not to globalThis. Do not pre-inject its metadata.
+  const executable = scoped ? '(function () {\n' + (strict ? '"use strict";\n' : '') + source + '\n})();' : source;
+  vm.runInNewContext(executable, context);
   await h.settle(done);
   await h.drain();
-  return { saved, logs: h.logs };
+  return { saved, logs: h.logs, outputs, requests: h.calls, context };
 }
+
+test('发行脚本在局部作用域运行，元数据不依赖全局属性也不误用全局旧版本', async () => {
+  const f = fixture();
+  try {
+    built(f);
+    const source = f.read('dist/loon-speedtest.js').toString();
+    for (const strict of [false, true]) {
+      for (const globalMetadata of [undefined, { version: '0.0.1', releaseDate: '2000-01-01' }]) {
+        const execution = await executeBundle(source, { scoped: true, strict, globalMetadata });
+        assert.equal(execution.context.LoonSpeedtestMetadata, globalMetadata, '局部注入不应改写全局元数据');
+        assert.equal(execution.context.LoonSpeedtest.releaseDate, f.packageInfo.releaseDate);
+        assert.equal(execution.saved.length, 1);
+        assert.equal(execution.saved[0].version, f.packageInfo.version);
+        assert.equal(execution.saved[0].state, 'ok');
+        assert.equal(execution.saved[0].runs.length, 2);
+        assert.ok(execution.logs.includes('节点速度测试 v' + f.packageInfo.version + ' | 脚本已加载'));
+        assert.equal(execution.outputs.length, 1);
+        assert.ok(execution.outputs[0].htmlMessage);
+        assert.ok(execution.requests.some(request => request.method === 'GET'));
+        assert.ok(execution.requests.some(request => request.method === 'POST'));
+        assert.ok(execution.requests.every(request => request.node === '节点 A'));
+      }
+    }
+  } finally { f.cleanup(); }
+});
 
 test('版本和日期仅修改 package 后，Node 与远端/本地 Loon 结果、日志及缓存键一致', async () => {
   const f = fixture();

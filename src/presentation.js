@@ -41,6 +41,7 @@
       runs.forEach(function (run) {
         var valid = run.state === 'ok' && typeof run.bytesPerSecond === 'number' && isFinite(run.bytesPerSecond);
         var mode = run.concurrency === 1 ? '单路' : run.concurrency + ' 路并发';
+        if (run.requestedConcurrency > run.concurrency) mode += '（原 ' + run.requestedConcurrency + ' 路）';
         var rate = valid ? (run.bytesPerSecond * 8 / 1000000).toFixed(2) : '—';
         lines.push(text(mode + '  ', 12) + text(rate, 30, 600, color) + text(' Mbps', 12));
         if (!valid) {
@@ -56,8 +57,11 @@
       });
       body += paragraph(lines.join('<br>'));
     });
-    var concurrency = result.runs.every(function (run) { return run.concurrency === 1; }) ? 1 : 2;
-    var mode = result.mode === 'compare' ? '单路 / 并发对比' : concurrency > 1 ? '并发' : '单路';
+    var mode = result.mode === 'compare' ? '单路 / 并发对比' : result.mode === 'concurrent' ? '并发模式' : '单路';
+    if (result.mode === 'concurrent' && result.runs.some(function (run) { return run.requestedConcurrency > run.concurrency; })) {
+      var actual = result.runs.map(function (run) { return run.concurrency; }).filter(function (value, index, values) { return values.indexOf(value) === index; });
+      mode += actual.length === 1 ? '（实际 ' + actual[0] + ' 路）' : '（部分降载）';
+    }
     body += paragraph(text(mode + ' · ' + (elapsed / 1000).toFixed(1) + ' 秒 · ' + (bytes / 1000000).toFixed(1) + ' MB', 11));
     var uniqueWarnings = warnings.filter(function (warning, index) { return warnings.indexOf(warning) === index; });
     function priority(warning) { return /已降低负载/.test(warning) ? 0 : /收尾等待/.test(warning) ? 1 : 2; }

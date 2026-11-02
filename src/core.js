@@ -16,6 +16,7 @@
   var MAX_INFLIGHT_BUFFER_BYTES = 4000000;
   var MIN_ADAPTIVE_CHUNK_BYTES = 16000;
   var INITIAL_ADAPTIVE_CHUNK_BYTES = 64000;
+  var RECOVERY_CHUNK_BYTES = 16000;
   // 自适应请求的错峰、目标传输时间与最短超时，单位为毫秒。
   var WORKER_STAGGER_MS = 150;
   var DOWNLOAD_TARGET_MS = 750;
@@ -502,10 +503,10 @@
           initialChunkBytes: INITIAL_ADAPTIVE_CHUNK_BYTES, chunkBytes: Math.min(options.chunkBytes, options.adaptive ? 256000 : Math.max(1, Math.floor(warmupBudget / levels[i])))
         }), runtime);
         used += warmup.scheduledBytes;
-        if (warmup.state !== "ok" && recoveryLeft && recoverable(warmup) && phaseBudget - used >= 16000) {
+        if (warmup.state !== "ok" && recoveryLeft && recoverable(warmup) && phaseBudget - used >= RECOVERY_CHUNK_BYTES) {
           discarded.push(warmup); fallback(); recoveryAttempted = true;
           if (runtime.log) runtime.log("预热已回调结束，改用小块单路做一次恢复探测；旧数据不计正式速度");
-          warmup = await runPhase(Object.assign({}, options, { phase: "warmup", concurrency: 1, durationMs: 1000, maxBytes: 16000, chunkBytes: 16000, initialChunkBytes: 16000 }), runtime);
+          warmup = await runPhase(Object.assign({}, options, { phase: "warmup", concurrency: 1, durationMs: 1000, maxBytes: RECOVERY_CHUNK_BYTES, chunkBytes: RECOVERY_CHUNK_BYTES, initialChunkBytes: RECOVERY_CHUNK_BYTES }), runtime);
           used += warmup.scheduledBytes;
         }
       }
@@ -519,11 +520,11 @@
         }), runtime);
         used += result.scheduledBytes;
         var remainingMs = options.durationMs - result.elapsedMs;
-        if (result.state !== "ok" && recoveryLeft && recoverable(result) && remainingMs >= 2000 && phaseBudget - used >= 16000) {
+        if (result.state !== "ok" && recoveryLeft && recoverable(result) && remainingMs >= 2000 && phaseBudget - used >= RECOVERY_CHUNK_BYTES) {
           discarded.push(result); fallback(); recoveryAttempted = true;
           var lowerConcurrency = Math.max(1, Math.floor(levels[i] / 2));
           if (runtime.log) runtime.log("正式阶段已明确结束，降低并发为 " + lowerConcurrency + " 后独立重测一次；失败阶段不计新速度");
-          result = await runPhase(Object.assign({}, options, { phase: "measurement", concurrency: lowerConcurrency, durationMs: remainingMs, maxBytes: phaseBudget - used, initialChunkBytes: 16000, chunkBytes: Math.min(options.chunkBytes, 256000) }), runtime);
+          result = await runPhase(Object.assign({}, options, { phase: "measurement", concurrency: lowerConcurrency, durationMs: remainingMs, maxBytes: phaseBudget - used, initialChunkBytes: RECOVERY_CHUNK_BYTES, chunkBytes: Math.min(options.chunkBytes, 256000) }), runtime);
           used += result.scheduledBytes;
         }
       }
